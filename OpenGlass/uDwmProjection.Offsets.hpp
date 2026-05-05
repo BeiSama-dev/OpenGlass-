@@ -203,6 +203,30 @@ namespace OpenGlass::uDWM
 			};
 		}
 	};
+	struct CButton_GetVisualState_Offsets {
+		consteval static auto operator()(){
+			return std::array{
+				Util::OffsetInfo{ .offset = 376, .build = os::build_w11_24h2, .revision = 0 },
+				Util::OffsetInfo{ .offset = 328, .build = 0, .revision = 0 }
+			};
+		}
+	};
+	struct CButton_GetFirstAtlasImage_Offsets {
+		consteval static auto operator()(){
+			return std::array{
+				Util::OffsetInfo{ .offset = 296, .build = os::build_w11_24h2, .revision = 0 },
+				Util::OffsetInfo{ .offset = 248, .build = 0, .revision = 0 }
+			};
+		}
+	};
+	struct CButton_GetSecondAtlasImage_Offsets {
+		consteval static auto operator()(){
+			return std::array{
+				Util::OffsetInfo{ .offset = 304, .build = os::build_w11_24h2, .revision = 0 },
+				Util::OffsetInfo{ .offset = 256, .build = 0, .revision = 0 }
+			};
+		}
+	};
 
 	struct CAccent_GetAccentPolicy_Offsets {
 		consteval static auto operator()(){
@@ -444,6 +468,17 @@ namespace OpenGlass::uDWM
 				Util::OffsetInfo{ .offset = 39 * sizeof(ULONG_PTR), .build = os::build_w11_22h2, .revision = 0 },
 				Util::OffsetInfo{ .offset = 42 * sizeof(ULONG_PTR), .build = os::build_w11_24h2, .revision = 0 },
 				Util::OffsetInfo{ .offset = 37 * sizeof(ULONG_PTR), .build = 0, .revision = 0 }
+			};
+		}
+	};
+	struct CTopLevelWindow_GetNonClientVisual_Index_Offsets {
+		consteval static auto operator()() {
+			return std::array{
+				Util::OffsetInfo{.offset = 32 * sizeof(ULONG_PTR), .build = os::build_w10_2004, .revision = 0 },
+				Util::OffsetInfo{.offset = 33 * sizeof(ULONG_PTR), .build = os::build_w11_21h2, .revision = 0 },
+				Util::OffsetInfo{.offset = 34 * sizeof(ULONG_PTR), .build = os::build_w11_22h2, .revision = 0 },
+				Util::OffsetInfo{.offset = 36 * sizeof(ULONG_PTR), .build = os::build_w11_24h2, .revision = 0 },
+				Util::OffsetInfo{.offset = 31 * sizeof(ULONG_PTR), .build = 0, .revision = 0 }
 			};
 		}
 	};
