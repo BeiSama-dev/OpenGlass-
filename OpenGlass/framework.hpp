@@ -6,7 +6,7 @@
 #ifndef NOMINMAX
 	#define NOMINMAX
 #endif
-#include <KNSoft/NDK/NDK.h>
+#include "KNSoft/NDK/NDK.h"
 #include <windows.h>
 #include <windowsx.h>
 
