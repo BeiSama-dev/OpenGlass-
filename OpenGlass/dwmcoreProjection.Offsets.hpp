@@ -582,12 +582,18 @@ namespace OpenGlass::dwmcore
 					.build = os::build_w11_24h2,
 					.revision = os::revision_24h2_with_25h2_code_staged
 				},
-				Util::OffsetInfo
-				{
-					.offset = 1708,
-					.build = 0,
-					.revision = 0
-				}
+Util::OffsetInfo
+{
+    .offset = 1708,
+    .build = os::build_w11_24h2,
+    .revision = os::revision_24h2_8271
+},
+Util::OffsetInfo
+{
+    .offset = 1684,
+    .build = 0,
+    .revision = 0
+}
 			};
 		}
 	};
@@ -660,12 +666,18 @@ namespace OpenGlass::dwmcore
 					.build = os::build_w11_24h2,
 					.revision = os::revision_24h2_with_25h2_code_staged
 				},
-				Util::OffsetInfo
-				{
-					.offset = 1572,
-					.build = 0,
-					.revision = 0
-				}
+Util::OffsetInfo
+{
+    .offset = 1572,
+    .build = os::build_w11_24h2,
+    .revision = os::revision_24h2_8271
+},
+Util::OffsetInfo
+{
+    .offset = 1548,
+    .build = 0,
+    .revision = 0
+}
 			};
 		}
 	};
@@ -705,12 +717,18 @@ namespace OpenGlass::dwmcore
 					.build = os::build_w11_24h2,
 					.revision = os::revision_24h2_with_25h2_code_staged
 				},
-				Util::OffsetInfo
-				{
-					.offset = 1564,
-					.build = 0,
-					.revision = 0
-				}
+Util::OffsetInfo
+{
+    .offset = 1564,
+    .build = os::build_w11_24h2,
+    .revision = os::revision_24h2_8271
+},
+Util::OffsetInfo
+{
+    .offset = 1540,
+    .build = 0,
+    .revision = 0
+}
 			};
 		}
 	};
@@ -751,12 +769,18 @@ namespace OpenGlass::dwmcore
 					.build = os::build_w11_24h2,
 					.revision = os::revision_24h2_with_25h2_code_staged
 				},
-				Util::OffsetInfo
-				{
-					.offset = 616,
-					.build = 0,
-					.revision = 0
-				}
+Util::OffsetInfo
+{
+    .offset = 616,
+    .build = os::build_w11_24h2,
+    .revision = os::revision_24h2_8271
+},
+Util::OffsetInfo
+{
+    .offset = 592,
+    .build = 0,
+    .revision = 0
+}
 			};
 		}
 	};
