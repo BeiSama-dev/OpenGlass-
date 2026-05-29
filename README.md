@@ -1,6 +1,8 @@
 # highlight 分支原作者已经不再维护，所以目前也就我在维护了
 # 不和谐上某些失败者也不需要说我只会偷，我开源这个分支你咋又不说了？
 
+"The highlight branch is no longer maintained by the original author, so I'm the one maintaining it now. Some losers on Discord don't need to say I only steal — why don't you mention that I've open-sourced this branch?"
+
 ![header](assets/banner.png)
 
 # Experience native look of Aero Glass interface on Windows 10+
