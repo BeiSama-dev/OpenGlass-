@@ -79,6 +79,7 @@
     <ClInclude Include="Shared.hpp" />
     <ClInclude Include="GlassService.hpp" />
     <ClInclude Include="CaptionTextHandler.hpp" />
+    <ClInclude Include="CaptionTextRealizer.hpp" />
     <ClInclude Include="GlassEngine.hpp" />
     <ClInclude Include="CppRT.hpp" />
     <ClInclude Include="framework.hpp" />
@@ -121,6 +122,7 @@
     <ClCompile Include="module.cpp" />
     <ClCompile Include="GlassService.cpp" />
     <ClCompile Include="CaptionTextHandler.cpp" />
+    <ClCompile Include="CaptionTextRealizer.cpp" />
     <ClCompile Include="GlassEngine.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="GlassReflectionHandler.cpp" />
@@ -142,6 +144,8 @@
     <None Include="Blur.PS_BlurV.cso" />
     <None Include="Blur.PS_BlurV_Vista.cso" />
     <None Include="Blur.VS.cso" />
+    <None Include="CaptionText.PS.cso" />
+    <None Include="CaptionText.VS.cso" />
     <None Include="Common.hlsli" />
     <None Include="module.def" />
     <None Include="packages.config" />
@@ -170,6 +174,12 @@
       <ShaderType>Pixel</ShaderType>
     </FxCompile>
     <FxCompile Include="Blur.VS.hlsl">
+      <ShaderType>Vertex</ShaderType>
+    </FxCompile>
+    <FxCompile Include="CaptionText.PS.hlsl">
+      <ShaderType>Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="CaptionText.VS.hlsl">
       <ShaderType>Vertex</ShaderType>
     </FxCompile>
   </ItemGroup>

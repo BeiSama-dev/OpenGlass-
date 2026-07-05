@@ -1,6 +1,6 @@
 //{{NO_DEPENDENCIES}}
-// Archivo de inclusión generado de Microsoft Visual C++.
-// Usado por OpenGlass.rc
+// Microsoft Visual C++ generated include file.
+// Used by OpenGlass.rc
 //
 #define IDS_STRING101                   101
 #define IDS_STRING102                   102
@@ -19,12 +19,15 @@
 #define IDS_STRING113                   113
 #define IDS_STRING114                   114
 #define IDS_STRING115                   115
+
+// Precompiled CSO shaders (RCDATA)
 #define IDR_RCDATA_BLUR_VS              116
 #define IDR_RCDATA_BLUR_PS_BLURH        117
 #define IDR_RCDATA_BLUR_PS_BLURV        118
 #define IDR_RCDATA_BLUR_PS_BLURV_VISTA  119
+#define IDR_RCDATA_CAPTIONTEXT_VS       120
+#define IDR_RCDATA_CAPTIONTEXT_PS       121
 #define IDB_HIGHLIGHT                   120
-#define IDB_PNG2                        121
 #define IDB_SIDEHIGHLIGHT               121
 
 // Next default values for new objects

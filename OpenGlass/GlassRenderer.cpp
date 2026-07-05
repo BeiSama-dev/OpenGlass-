@@ -10,6 +10,7 @@
 #include "D3DGlassRealizer.hpp"
 #include "ReflectionRealizer.hpp"
 #include "HighlightRealizer.hpp"
+#include "CaptionTextRealizer.hpp"
 #include "MaterialRealizer.hpp"
 #include "D2DPrivates.hpp"
 #include "GlassCoverageSet.hpp"
@@ -244,6 +245,11 @@ HRESULT GlassRenderer::MyCRenderData_TryDrawCommandAsDrawList(
 	T&& callback
 )
 {
+	if (CaptionTextRealizer::OnTryDrawCommand(This, drawingContext, commandType, resources, succeeded))
+	{
+		return S_OK;
+	}
+
 	if (
 		commandType == g_drawGeometryCommandType &&
 		resources->length == sizeof(dwmcore::CDrawGeometryCommand) &&
@@ -914,6 +920,7 @@ HRESULT GlassRenderer::MyCWindowNode_RenderImage(
 void GlassRenderer::DestroyDeviceResources(dwmcore::CD2DContext* d2dContext)
 {
 	g_deviceResources.erase(d2dContext);
+	CaptionTextRealizer::DestroyDeviceResources();
 }
 
 void GlassRenderer::Update(GlassEngine::UpdateType type)
@@ -956,6 +963,7 @@ void GlassRenderer::Update(GlassEngine::UpdateType type)
 
 void GlassRenderer::Startup()
 {
+	CaptionTextRealizer::Startup();
 	dwmcore::g_projectionArray.ApplyToVariable("CRenderData::TryDrawCommandAsDrawList", g_CRenderData_TryDrawCommandAsDrawList_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("CRenderData::DrawImageResource_FillMode", g_CRenderData_DrawImageResource_FillMode_Org);
 #ifdef _DEBUG
@@ -1055,6 +1063,7 @@ void GlassRenderer::Startup()
 
 void GlassRenderer::Shutdown()
 {
+	CaptionTextRealizer::Shutdown();
 	const auto build_before_w11_24h2 = Util::VersionBefore<os::build_w11_24h2, os::revision_24h2_rtm_1>(dwmcore::g_versionInfo.build, dwmcore::g_versionInfo.revision);
 	const auto build_before_w11_21h2 = dwmcore::g_versionInfo.build < os::build_w11_21h2;
 	HookHelper::PatchFunctions(
