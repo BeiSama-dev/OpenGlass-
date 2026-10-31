@@ -469,6 +469,7 @@ HRESULT GlassRenderer::MyCDrawingContext_DrawGeometry(
 	RectF::IntersectUnsafe(g_drawingWorldBounds, renderingShapeBounds);
 	if (
 		occlusionContext &&
+		Shared::g_coverageSetIsCoveredHooked &&
 		occlusionContext->GetArrayBasedCoverageSet()->IsCovered(
 			g_drawingWorldBounds,
 			drawingContext->GetD2DContextOwner()->GetCurrentZ()

@@ -41,6 +41,8 @@ namespace OpenGlass::os
 		build_w11_24h2 = 26100,
 		build_w11_25h2 = 26200,
 		build_w11_26h2 = 26300,
+		// 自该版本起 occluder 翻转/还原补丁不可用（上游 3.x 已整段删除）
+		build_flip_occluders_removed = 26100,
 	};
 	enum os_revision : ULONG
 	{

@@ -410,6 +410,11 @@ void GlassIntegrity::ShrinkOccludersAboveGlass(dwmcore::COcclusionContext* occlu
 
 	const auto coverageSet = occlusionContext->GetArrayBasedCoverageSet();
 	const auto matrix = occlusionContext->GetDeviceTransform();
+	// 从 Compute 进来，和 IsCovered 有没有挂钩无关：没挂上时调它会跳进无效函数指针
+	if (!Shared::g_coverageSetIsCoveredHooked)
+	{
+		return;
+	}
 	for (const auto& glassRegion : glassCoverageSet->GetViews())
 	{
 		if (
@@ -1486,6 +1491,24 @@ void GlassIntegrity::Update([[maybe_unused]] GlassEngine::UpdateType type)
 
 void GlassIntegrity::Startup()
 {
+	if (Shared::g_disabledHooks.test(Shared::DisabledHooks_GlassIntegrity))
+	{
+		return;
+	}
+
+	// CArrayBasedCoverageSet::IsCovered 解析不到时整个模块不挂钩
+	{
+		dwmcore::g_projectionArray.ApplyToVariable("CArrayBasedCoverageSet::IsCovered", g_CArrayBasedCoverageSet_IsCovered_Org);
+		if (!g_CArrayBasedCoverageSet_IsCovered_Org)
+		{
+			Shared::g_coverageSetIsCoveredHooked = false;
+			return;
+		}
+		// 上游 3.x 已删除翻转/还原补丁；该版本起默认关闭，可用注册表强制打开
+		const auto coverageSetHookDefault = dwmcore::g_versionInfo.build >= os::build_flip_occluders_removed ? 1ul : 0ul;
+		Shared::g_coverageSetIsCoveredHooked = GlassEngine::GetDwordFromRegistry(L"DisableCoverageSetHook", coverageSetHookDefault) == 0;
+	}
+
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::CheckAndRecordOverlayCandidate", g_COcclusionContext_CheckAndRecordOverlayCandidate_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::CollectRectangleForOcclusion", g_COcclusionContext_CollectRectangleForOcclusion_Org.generic);
 
@@ -1493,7 +1516,6 @@ void GlassIntegrity::Startup()
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::SetDeviceTransform", g_COcclusionContext_SetDeviceTransform_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::~COcclusionContext", g_COcclusionContext_Destructor_Org);
 
-	dwmcore::g_projectionArray.ApplyToVariable("CArrayBasedCoverageSet::IsCovered", g_CArrayBasedCoverageSet_IsCovered_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::IsOccluded", g_COcclusionContext_IsOccluded_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::PageInPixelsRectToDeviceRect", g_COcclusionContext_PageInPixelsRectToDeviceRect_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("CHwndRenderTarget::RenderDirtyRegion", g_CHwndRenderTarget_RenderDirtyRegion_Org);
@@ -1566,7 +1588,7 @@ void GlassIntegrity::Startup()
 			{ &g_CTreeDirty_GetOptimizedRect_Org, &MyCTreeDirty_GetOptimizedRect, !build_before_w11_24h2 },
 
 			{ &g_COcclusionContext_IsOccluded_Org, &MyCOcclusionContext_IsOccluded, g_CArrayBasedCoverageSet_IsCovered_Org == nullptr },
-			{ &g_CArrayBasedCoverageSet_IsCovered_Org, &MyCArrayBasedCoverageSet_IsCovered, g_CArrayBasedCoverageSet_IsCovered_Org != nullptr },
+			{ &g_CArrayBasedCoverageSet_IsCovered_Org, &MyCArrayBasedCoverageSet_IsCovered, Shared::g_coverageSetIsCoveredHooked },
 			{ &g_COcclusionContext_PageInPixelsRectToDeviceRect_Org, &MyCOcclusionContext_PageInPixelsRectToDeviceRect, g_CArrayBasedCoverageSet_IsCovered_Org != nullptr },
 
 			{ &g_CDrawingContext_DrawVisualTree_Pre_Win10_2004_Org, &MyCDrawingContext_DrawVisualTree_Pre_Win10_2004, build_before_w10_2004 },
@@ -1614,7 +1636,7 @@ void GlassIntegrity::Shutdown()
 			{ &g_CTreeDirty_GetOptimizedRect_Org, &MyCTreeDirty_GetOptimizedRect, !build_before_w11_24h2 },
 
 			{ &g_COcclusionContext_IsOccluded_Org, &MyCOcclusionContext_IsOccluded, g_CArrayBasedCoverageSet_IsCovered_Org == nullptr },
-			{ &g_CArrayBasedCoverageSet_IsCovered_Org, &MyCArrayBasedCoverageSet_IsCovered, g_CArrayBasedCoverageSet_IsCovered_Org != nullptr },
+			{ &g_CArrayBasedCoverageSet_IsCovered_Org, &MyCArrayBasedCoverageSet_IsCovered, Shared::g_coverageSetIsCoveredHooked },
 			{ &g_COcclusionContext_PageInPixelsRectToDeviceRect_Org, &MyCOcclusionContext_PageInPixelsRectToDeviceRect, g_CArrayBasedCoverageSet_IsCovered_Org != nullptr },
 
 			{ &g_CDrawingContext_DrawVisualTree_Pre_Win10_2004_Org, &MyCDrawingContext_DrawVisualTree_Pre_Win10_2004, build_before_w10_2004 },
