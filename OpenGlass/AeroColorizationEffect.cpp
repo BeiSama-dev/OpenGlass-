@@ -12,7 +12,6 @@ STDMETHODIMP CAeroColorizationEffect::Register(ID2D1Factory1* factory)
 		D2D1_VALUE_TYPE_BINDING(L"vecAfterglow", &SetAfterglow, &GetAfterglow),
 		D2D1_VALUE_TYPE_BINDING(L"vecBlurBalance", &SetBlurBalance, &GetBlurBalance),
 		D2D1_VALUE_TYPE_BINDING(L"vecColor", &SetColor, &GetColor),
-		D2D1_VALUE_TYPE_BINDING(L"vecFallback", &SetFallback, &GetFallback),
 	};
 
 	return factory->RegisterEffectFromString(
@@ -39,10 +38,6 @@ STDMETHODIMP CAeroColorizationEffect::Register(ID2D1Factory1* factory)
 			"</Property>"
 			"<Property name='vecColor' type='vector4'>"
 				"<Property name='DisplayName' type='string' value='Color'/>"
-				"<Property name='Default' type='vector4' value='(0.0, 0.0, 0.0, 0.0)' />"
-			"</Property>"
-			"<Property name='vecFallback' type='vector4'>"
-				"<Property name='DisplayName' type='string' value='Fallback Color'/>"
 				"<Property name='Default' type='vector4' value='(0.0, 0.0, 0.0, 0.0)' />"
 			"</Property>"
 		"</Effect>",
@@ -94,17 +89,6 @@ HRESULT CAeroColorizationEffect::SetColor(D2D1_VECTOR_4F color)
 D2D1_VECTOR_4F CAeroColorizationEffect::GetColor() const
 {
 	return m_constants.color;
-}
-
-HRESULT CAeroColorizationEffect::SetFallback(D2D1_VECTOR_4F fallback)
-{
-	m_constants.fallback = fallback;
-	return S_OK;
-}
-
-D2D1_VECTOR_4F CAeroColorizationEffect::GetFallback() const
-{
-	return m_constants.fallback;
 }
 
 HRESULT CAeroColorizationEffect::UpdateConstants()
@@ -173,7 +157,7 @@ IFACEMETHODIMP CAeroColorizationEffect::MapOutputRectToInputRects(
 
 IFACEMETHODIMP CAeroColorizationEffect::MapInputRectsToOutputRect(
 	CONST D2D1_RECT_L* inputRects,
-	[[maybe_unused]] CONST D2D1_RECT_L* inputOpaqueSubRects,
+	CONST D2D1_RECT_L* inputOpaqueSubRects,
 	UINT32 inputRectCount,
 	D2D1_RECT_L* outputRect,
 	D2D1_RECT_L* outputOpaqueSubRect
@@ -185,7 +169,7 @@ IFACEMETHODIMP CAeroColorizationEffect::MapInputRectsToOutputRect(
 	}
 
 	*outputRect = inputRects[0];
-	*outputOpaqueSubRect = {};
+	*outputOpaqueSubRect = inputOpaqueSubRects[0];
 
 	return S_OK;
 }

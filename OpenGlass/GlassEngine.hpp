@@ -1,7 +1,6 @@
 #pragma once
 #include "framework.hpp"
 #include "cpprt.hpp"
-#include "RegistryValueResolver.hpp"
 #include "uDWMProjection.hpp"
 
 namespace OpenGlass::GlassEngine
@@ -19,9 +18,6 @@ namespace OpenGlass::GlassEngine
 	HKEY GetDwmKey();
 	HKEY GetPersonalizeKey();
 
-	// Long-term compatibility contract for transformation packs and plug-ins:
-	// runtime reads always prefer the current user's DWM value, then fall back
-	// to the machine value. The GUI's canonical write scope must not alter this.
 	FORCEINLINE std::optional<DWORD> TryGetDwordFromRegistry(PCWSTR keyName)
 	{
 		HRESULT hr{ S_OK };
@@ -69,13 +65,6 @@ namespace OpenGlass::GlassEngine
 
 		return value;
 	}
-
-	DWORD GetOverridableDwordFromRegistry(
-		PCWSTR baseKeyName,
-		PCWSTR overrideKeyName,
-		DWORD defaultValue = 0
-	);
-
 	template <size_t Length>
 	FORCEINLINE void GetStringFromRegistry(PCWSTR keyName, WCHAR(&returnValue)[Length])
 	{
@@ -99,11 +88,7 @@ namespace OpenGlass::GlassEngine
 	void LoadRegistry(bool redrawNow = true);
 	void UnloadRegistry();
 
-	void SetDwmNotificationWindow(HWND hWnd);
-	HWND GetDwmNotificationWindow();
-
 	void Update(UpdateType type, bool redrawNow = true);
 	void Startup();
-	void Activate();
 	void Shutdown();
 }

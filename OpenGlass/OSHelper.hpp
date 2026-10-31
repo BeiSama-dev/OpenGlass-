@@ -40,18 +40,20 @@ namespace OpenGlass::os
 		build_w11_23h2 = 22631,
 		build_w11_24h2 = 26100,
 		build_w11_25h2 = 26200,
-		build_w11_26h1 = 28000,
+		build_w11_26h2 = 26300,
 	};
 	enum os_revision : ULONG
 	{
 		revision_21h2_rtm_0 = 194,
 		revision_21h2_post_rtm_0 = 282,
 		revision_24h2_rtm_1 = 2454,
+		revision_24h2_page_in_pixels_helper_reemitted = 3912,
 		revision_24h2_with_25h2_code_staged = 4484,
 		revision_24h2_kb5067036 = 7019,
 		revision_25h2_kb5068861 = 7019,
 		revision_kb5083631 = 8328,
-		revision_kb5101684 = 8972,
+		revision_24h2_kb5124010 = 9549,
+		revision_24h2_occlusion_abi_break = 7840,
 	};
 }
 

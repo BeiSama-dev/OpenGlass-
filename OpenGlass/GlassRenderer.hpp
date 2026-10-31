@@ -11,5 +11,4 @@ namespace OpenGlass::GlassRenderer
 	void Update(GlassEngine::UpdateType type);
 	void Startup();
 	void Shutdown();
-	void Cleanup();
 }

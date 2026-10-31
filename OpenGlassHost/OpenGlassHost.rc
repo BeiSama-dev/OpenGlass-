@@ -1,7 +1,6 @@
 // Microsoft Visual C++ generated resource script.
 //
 #include "resource.h"
-#include "OpenGlassVersion.h"
 
 #define APSTUDIO_READONLY_SYMBOLS
 /////////////////////////////////////////////////////////////////////////////
@@ -51,8 +50,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION OPENGLASS_PRODUCT_VERSION
- PRODUCTVERSION OPENGLASS_PRODUCT_VERSION
+ FILEVERSION 1,0,0,1
+ PRODUCTVERSION 2,6,5,3012
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -69,12 +68,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "ALTaleX"
             VALUE "FileDescription", "Aero Glass Extension Loader for Desktop Window Manager"
-            VALUE "FileVersion", OPENGLASS_PRODUCT_VERSION_STRING
+            VALUE "FileVersion", "1.0.0.1"
             VALUE "InternalName", "Aero Glass for Win10+"
             VALUE "LegalCopyright", "Copyright (C) 2024-2026 ALTaleX531"
             VALUE "OriginalFilename", "OpenGlassHost.exe"
             VALUE "ProductName", "OpenGlass"
-            VALUE "ProductVersion", OPENGLASS_PRODUCT_VERSION_STRING
+            VALUE "ProductVersion", "2.6.5.3012"
         END
     END
     BLOCK "VarFileInfo"

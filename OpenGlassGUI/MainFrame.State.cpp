@@ -73,10 +73,12 @@ namespace OpenGlass
 			m_dirtyKeys.clear();
 		}
 
-		// System
-		m_chkDisableGlassOnBattery->SetValue(m_config->GetDword(L"DisableGlassOnBattery", 1) != 0);
+		RegistryConfig* systemConfig = m_systemConfig ? m_systemConfig.get() : m_config.get();
 
-		DWORD hookMask = m_config->GetDword(L"DisabledHooks", 0);
+		// System
+		m_chkDisableGlassOnBattery->SetValue(systemConfig->GetDword(L"DisableGlassOnBattery", 1) != 0);
+
+		DWORD hookMask = systemConfig->GetDword(L"DisabledHooks", 0);
 		m_clDisabledHooks->Check(0, (hookMask & 0x1) != 0);
 		m_clDisabledHooks->Check(1, (hookMask & 0x2) != 0);
 		m_clDisabledHooks->Check(2, (hookMask & 0x4) != 0);
@@ -188,7 +190,7 @@ namespace OpenGlass
 			m_chBlurOptimization->SetSelection(std::clamp<int>(m_config->GetDword(L"BlurOptimization", 0), 0, 2));
 			m_chBlurOptimization->Enable(true);
 		}
-		m_chkGlassSafetyZone->SetValue(m_config->GetDword(L"GlassSafetyZoneMode", 1) == 0);
+		m_chkGlassSafetyZone->SetValue(systemConfig->GetDword(L"GlassSafetyZoneMode", 1) == 0);
 
 		// RoundRect
 		DWORD radius = m_config->GetDword(L"RoundRectRadius", 0);
@@ -212,6 +214,8 @@ namespace OpenGlass
 
 		m_chCaptionButtons->SetSelection(std::clamp<int>(m_config->GetDword(L"CaptionButtons", 0), 0, 3));
 		m_chCenterCaption->SetSelection(std::clamp<int>(m_config->GetDword(L"CenterCaption", 0), 0, 2));
+		m_chCaptionTextAliasing->SetSelection(std::clamp<int>(m_config->GetDword(L"CaptionTextAliasing", 0), 0, 1));
+		m_chHighlightStyle->SetSelection(std::clamp<int>(m_config->GetDword(L"HighlightStyle", 0), 0, 2));
 		m_chkDisableModernBorders->SetValue(m_config->GetDword(L"DisableModernBorders", 0) != 0);
 
 		// Colors
@@ -220,24 +224,15 @@ namespace OpenGlass
 		};
 
 		m_rbGlassType->SetSelection(std::clamp<int>(m_config->GetDword(L"GlassType", 0), 0, 1));
-		m_chkEnableTransparency->SetValue(m_config->GetDword(L"ColorizationOpaqueBlend", 0) == 0);
+		m_chkOpaqueBlend->SetValue(m_config->GetDword(L"ColorizationOpaqueBlend", 0) != 0);
 
-		const DWORD activeColor = ResolveOverridableDword(
-			Settings::Id::ColorizationColor,
-			Settings::Id::ColorizationColorOverride,
-			0xFF000000
-		).value;
+		const bool hasColorOverride = m_config->HasValue(L"ColorizationColorOverride");
+		const DWORD activeColor = hasColorOverride
+			? m_config->GetDword(L"ColorizationColorOverride", 0xFF000000)
+			: m_config->GetDword(L"ColorizationColor", 0xFF000000);
 		m_cpColorizationColor->SetColour(dwordToColor(activeColor));
-		const bool isVistaGlass = m_rbGlassType->GetSelection() == 0;
-		m_slColorIntensity->SetRange(
-			ColorizationPresets::ClassicIntensityMinimum,
-			ColorizationPresets::ClassicIntensityMaximum
-		);
-		const DWORD colorIntensity = isVistaGlass
-			? m_config->GetDword(L"GlassOpacity", 63)
-			: ColorizationPresets::CalculateVistaOpacity(activeColor);
-		m_slColorIntensity->SetValue(colorIntensity);
-		syncSliderTooltip(m_slColorIntensity);
+		m_slGlassOpacity->SetValue(m_config->GetDword(L"GlassOpacity", 63));
+		syncSliderTooltip(m_slGlassOpacity);
 
 		auto loadOptColor = [&](wxCheckBox* chk, wxColourPickerCtrl* cp, const std::wstring& key, DWORD defVal) {
 			DWORD val = m_config->GetDword(key, 0xFFFFFFFE);
@@ -335,32 +330,20 @@ namespace OpenGlass
 		syncSliderTooltip(m_slColorizationOpacityMaximized);
 		syncSliderTooltip(m_slColorizationOpacityInactiveMaximized);
 
-		m_slBlurBalance->SetValue(ResolveOverridableDword(
-			Settings::Id::ColorizationBlurBalance,
-			Settings::Id::ColorizationBlurBalanceOverride,
-			50
-		).value);
+		const bool hasBlurBalanceOverride = m_config->HasValue(L"ColorizationBlurBalanceOverride");
+		m_slBlurBalance->SetValue(m_config->GetDword(hasBlurBalanceOverride ? L"ColorizationBlurBalanceOverride" : L"ColorizationBlurBalance", 50));
 		syncSliderTooltip(m_slBlurBalance);
 
-		m_slAfterglowBalance->SetValue(ResolveOverridableDword(
-			Settings::Id::ColorizationAfterglowBalance,
-			Settings::Id::ColorizationAfterglowBalanceOverride,
-			10
-		).value);
+		const bool hasAfterglowBalanceOverride = m_config->HasValue(L"ColorizationAfterglowBalanceOverride");
+		m_slAfterglowBalance->SetValue(m_config->GetDword(hasAfterglowBalanceOverride ? L"ColorizationAfterglowBalanceOverride" : L"ColorizationAfterglowBalance", 10));
 		syncSliderTooltip(m_slAfterglowBalance);
 
-		m_slColorBalance->SetValue(ResolveOverridableDword(
-			Settings::Id::ColorizationColorBalance,
-			Settings::Id::ColorizationColorBalanceOverride,
-			10
-		).value);
+		const bool hasColorBalanceOverride = m_config->HasValue(L"ColorizationColorBalanceOverride");
+		m_slColorBalance->SetValue(m_config->GetDword(hasColorBalanceOverride ? L"ColorizationColorBalanceOverride" : L"ColorizationColorBalance", 10));
 		syncSliderTooltip(m_slColorBalance);
 		wxColour afterglowColor;
-		DWORD afterglowVal = ResolveOverridableDword(
-			Settings::Id::ColorizationAfterglow,
-			Settings::Id::ColorizationAfterglowOverride,
-			0
-		).value;
+		const bool hasAfterglowOverride = m_config->HasValue(L"ColorizationAfterglowOverride");
+		DWORD afterglowVal = m_config->GetDword(hasAfterglowOverride ? L"ColorizationAfterglowOverride" : L"ColorizationAfterglow", 0);
 		// Format is: AA RR GG BB
 		afterglowColor.Set(
 			(afterglowVal >> 16) & 0xFF,
@@ -399,26 +382,23 @@ namespace OpenGlass
 		if (m_glassColorsGroupSizer && m_vistaOpacitySizer)
 			m_glassColorsGroupSizer->Show(m_vistaOpacitySizer, isVista, true);
 
-		if (m_colorPresetsGroupSizer)
-		{
-			if (m_vistaPresetSizer)
-			{
-				m_colorPresetsGroupSizer->Show(m_vistaPresetSizer, isVista, true);
-			}
-			if (m_windows7PresetSizer)
-			{
-				m_colorPresetsGroupSizer->Show(m_windows7PresetSizer, !isVista, true);
-			}
-		}
-
 		// IMPORTANT: m_rbGlassType->GetContainingSizer() is the *row* that hosts the radiobox,
 		// not the page root sizer. Use the Glass Colors page/root sizer for visibility changes.
 		wxWindow* page = m_glassColorsPanel;
-		if (m_detailedColorizationSizer)
+		wxSizer* root = m_glassColorsRootSizer;
+		if (!root && page)
 		{
+			root = page->GetSizer();
+		}
+		if (root)
+		{
+			if (m_vistaGroupSizer)
+			{
+				root->Show(m_vistaGroupSizer, isVista, true);
+			}
 			if (m_win7GroupSizer)
 			{
-				m_detailedColorizationSizer->Show(m_win7GroupSizer, !isVista, true);
+				root->Show(m_win7GroupSizer, !isVista, true);
 			}
 		}
 
@@ -433,6 +413,5 @@ namespace OpenGlass
 
 		UpdateOptionStatusIcons();
 		UpdatePathWarningIcons();
-		UpdateColorizationPresetSelection();
 	}
 }

@@ -431,5 +431,6 @@ FodyWeavers.xsd
 
 # Custom rules
 vcpkg_installed/
-OpenGlassRenderTest/OpenGlassRenderTest.png
+OpenGlassTest/OpenGlassTest.png
 *.cso
+symbols/

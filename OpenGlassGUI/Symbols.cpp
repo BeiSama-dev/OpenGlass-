@@ -1,5 +1,4 @@
 #include "pch.h"
-#include "ApplicationPaths.hpp"
 #include "Symbols.hpp"
 
 #include <winrt/Windows.Foundation.h>
@@ -180,6 +179,18 @@ namespace OpenGlass
 			}
 		};
 
+		std::wstring GetExecutableDirectory()
+		{
+			WCHAR modulePath[MAX_PATH]{};
+			const DWORD length = GetModuleFileNameW(nullptr, modulePath, ARRAYSIZE(modulePath));
+			if (length == 0 || length >= ARRAYSIZE(modulePath))
+			{
+				return {};
+			}
+
+			return std::filesystem::path{ modulePath }.parent_path().wstring();
+		}
+
 		std::wstring GetSystemModulePath(PCWSTR moduleName)
 		{
 			WCHAR systemPath[MAX_PATH]{};
@@ -354,13 +365,19 @@ namespace OpenGlass
 
 	std::wstring GetSymbolCacheDirectory()
 	{
-		return ApplicationPaths::GetProgramDataSubdirectory(L"symbols").wstring();
+		const auto executableDirectory = GetExecutableDirectory();
+		if (executableDirectory.empty())
+		{
+			return L"symbols";
+		}
+
+		return (std::filesystem::path{ executableDirectory } / L"symbols").wstring();
 	}
 
-	SymbolDownloadOutcome DownloadSymbols(std::wstring symbolDirectory, const std::stop_token& stopToken, const SymbolDownloadProgressCallback& progressCallback)
+	SymbolDownloadOutcome DownloadSymbols(const std::stop_token& stopToken, const SymbolDownloadProgressCallback& progressCallback)
 	{
 		SymbolDownloadOutcome outcome{};
-		outcome.symbolDirectory = symbolDirectory.empty() ? GetSymbolCacheDirectory() : std::move(symbolDirectory);
+		outcome.symbolDirectory = GetSymbolCacheDirectory();
 
 		const HRESULT roInitResult = RoInitialize(RO_INIT_MULTITHREADED);
 		const auto roScope = wil::scope_exit([roInitResult]

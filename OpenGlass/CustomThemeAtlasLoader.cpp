@@ -4,8 +4,6 @@
 #include "HookHelper.hpp"
 #include "uDWMProjection.hpp"
 #include "CustomThemeAtlasLoader.hpp"
-#include "PngAssetValidation.hpp"
-#include "ThemeAtlasLayout.hpp"
 
 using namespace OpenGlass;
 namespace OpenGlass::CustomThemeAtlasLoader
@@ -28,8 +26,9 @@ namespace OpenGlass::CustomThemeAtlasLoader
 		return (u1 << 48) | (u2 << 32) | ui;
 	}
 	HRESULT LoadThemeAtlas(LPCWSTR themeAtlasPath);
-	HRESULT LoadThemeAtlasLayout(LPCWSTR themeAtlasLayoutPath);
+	void LoadThemeAtlasLayout(LPCWSTR themeAtlasLayoutPath);
 	HRESULT LoadTextGlowFromThemeAtlas();
+	void LoadHighlights();
 	void LoadTheme(
 		LPCWSTR themeAtlasPath,
 		LPCWSTR themeAtlasLayoutPath
@@ -44,16 +43,43 @@ namespace OpenGlass::CustomThemeAtlasLoader
 	std::unordered_map<size_t, MARGINS> g_themeAtlasLayoutMap{};
 	std::unique_ptr<BYTE[]> g_themeAtlasStream{};
 	UINT g_themeAtlasStreamSize{};
-	std::optional<PngAssetValidation::ImageInfo> g_themeAtlasInfo;
 	wil::unique_htheme g_themeHandle{};
-	HookHelper::ImportHook g_themeImportHook;
+
+	// KB5127648 之后同一个类可能同时存在多个主题句柄，和自己的句柄比已不可靠
+	using PGetThemeClass = HRESULT(WINAPI*)(HTHEME, LPWSTR, int);
+	PGetThemeClass GetThemeClassProc()
+	{
+		static const auto proc = reinterpret_cast<PGetThemeClass>(
+			GetProcAddress(GetModuleHandleW(L"uxtheme.dll"), "GetThemeClass"));
+		return proc;
+	}
+
+	inline bool IsDwmWindowTheme(HTHEME hTheme)
+	{
+		if (!hTheme)
+		{
+			return false;
+		}
+		const auto getThemeClass = GetThemeClassProc();
+		if (!getThemeClass)
+		{
+			return hTheme == g_themeHandle.get();
+		}
+		WCHAR className[64]{};
+		if (FAILED(getThemeClass(hTheme, className, ARRAYSIZE(className))))
+		{
+			return false;
+		}
+		return _wcsicmp(className, L"DWMWindow") == 0;
+	}
+
 	void UnloadTheme()
 	{
 		Shared::g_textGlowBitmap.reset();
+		Shared::g_themeHighlightAssets.store(nullptr);
 
 		g_themeAtlasStream.reset();
 		g_themeAtlasStreamSize = 0;
-		g_themeAtlasInfo.reset();
 		g_themeAtlasLayoutMap.clear();
 		g_themeAtlasLayoutQuirk = CompatibilityQuirk::None;
 		Shared::g_dontDeflateInactiveFrameGeometry = true;
@@ -74,7 +100,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeStream(
 )
 {
 	if (
-		hTheme != g_themeHandle.get() ||
+		!IsDwmWindowTheme(hTheme) ||
 		iPartId ||
 		iStateId ||
 		iPropId != TMT_DISKSTREAM ||
@@ -101,7 +127,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeMargins(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
+		!IsDwmWindowTheme(hTheme) ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -130,7 +156,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeRect(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
+		!IsDwmWindowTheme(hTheme) ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -165,7 +191,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeInt(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
+		!IsDwmWindowTheme(hTheme) ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -194,7 +220,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeColor(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
+		!IsDwmWindowTheme(hTheme) ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -212,6 +238,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeColor(
 	*pColor = RGB(it->second.cxLeftWidth, it->second.cxRightWidth, it->second.cyTopHeight);
 	return S_OK;
 }
+
 HTHEME CustomThemeAtlasLoader::GetThemeHandle()
 {
 	return g_themeHandle.get();
@@ -232,33 +259,9 @@ HRESULT CustomThemeAtlasLoader::LoadThemeAtlas(LPCWSTR themeAtlasPath)
 		LARGE_INTEGER fileSize{};
 		RETURN_IF_WIN32_BOOL_FALSE(GetFileSizeEx(file.get(), &fileSize));
 
-		RETURN_HR_IF(HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE), fileSize.QuadPart <= 0 || fileSize.QuadPart > PngAssetValidation::MaximumFileSize);
-		const UINT candidateSize = static_cast<UINT>(fileSize.QuadPart);
-		auto candidate = std::make_unique<BYTE[]>(candidateSize);
-		DWORD bytesRead{};
-		RETURN_IF_WIN32_BOOL_FALSE(ReadFile(file.get(), candidate.get(), candidateSize, &bytesRead, nullptr));
-		RETURN_HR_IF(HRESULT_FROM_WIN32(ERROR_HANDLE_EOF), bytesRead != candidateSize);
-
-		PngAssetValidation::ImageInfo candidateInfo{};
-		RETURN_IF_FAILED(PngAssetValidation::ValidateStructure(
-			{ reinterpret_cast<const std::byte*>(candidate.get()), candidateSize },
-			candidateInfo
-		));
-		winrt::com_ptr<IStream> stream{ SHCreateMemStream(candidate.get(), candidateSize), winrt::take_ownership_from_abi };
-		RETURN_HR_IF_NULL(E_OUTOFMEMORY, stream);
-		winrt::com_ptr<IWICImagingFactory> factory{ nullptr };
-		factory.copy_from(uDWM::CDesktopManager::GetInstance()->GetWICFactory());
-		winrt::com_ptr<IWICFormatConverter> converter{ nullptr };
-		RETURN_IF_FAILED(PngAssetValidation::CreateValidatedWicSource(
-			factory.get(),
-			stream.get(),
-			&candidateInfo,
-			converter.put()
-		));
-
-		g_themeAtlasStreamSize = candidateSize;
-		g_themeAtlasStream = std::move(candidate);
-		g_themeAtlasInfo = candidateInfo;
+		g_themeAtlasStreamSize = static_cast<UINT>(fileSize.QuadPart);
+		g_themeAtlasStream = std::make_unique<BYTE[]>(g_themeAtlasStreamSize);
+		RETURN_IF_WIN32_BOOL_FALSE(ReadFile(file.get(), g_themeAtlasStream.get(), g_themeAtlasStreamSize, nullptr, nullptr));
 	}
 	else
 	{
@@ -293,7 +296,6 @@ HRESULT CustomThemeAtlasLoader::LoadThemeAtlas(LPCWSTR themeAtlasPath)
 
 		g_themeAtlasStreamSize = streamSize;
 		g_themeAtlasStream = std::make_unique<BYTE[]>(g_themeAtlasStreamSize);
-		g_themeAtlasInfo.reset();
 		memcpy_s(
 			g_themeAtlasStream.get(),
 			g_themeAtlasStreamSize,
@@ -305,75 +307,87 @@ HRESULT CustomThemeAtlasLoader::LoadThemeAtlas(LPCWSTR themeAtlasPath)
 	return S_OK;
 }
 
-HRESULT CustomThemeAtlasLoader::LoadThemeAtlasLayout(LPCWSTR themeAtlasLayoutPath) try
+void CustomThemeAtlasLoader::LoadThemeAtlasLayout(LPCWSTR themeAtlasLayoutPath)
 {
-	if (!PathFileExistsW(themeAtlasLayoutPath)) return S_FALSE;
-
-	wil::unique_hfile file{ CreateFileW(themeAtlasLayoutPath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr) };
-	RETURN_LAST_ERROR_IF(!file.is_valid());
-	LARGE_INTEGER fileSize{};
-	RETURN_IF_WIN32_BOOL_FALSE(GetFileSizeEx(file.get(), &fileSize));
-	RETURN_HR_IF(
-		HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE),
-		fileSize.QuadPart < 0 || fileSize.QuadPart > ThemeAtlasLayout::MaximumFileSize
-	);
-
-	std::vector<std::byte> bytes(static_cast<std::size_t>(fileSize.QuadPart));
-	if (!bytes.empty())
+	FILE* file{};
+	_wfopen_s(&file, themeAtlasLayoutPath, L"r");
+	if (!file)
 	{
-		DWORD bytesRead{};
-		RETURN_IF_WIN32_BOOL_FALSE(ReadFile(file.get(), bytes.data(), static_cast<DWORD>(bytes.size()), &bytesRead, nullptr));
-		RETURN_HR_IF(HRESULT_FROM_WIN32(ERROR_HANDLE_EOF), bytesRead != static_cast<DWORD>(bytes.size()));
+		return;
 	}
 
-	ThemeAtlasLayout::Document document;
-	RETURN_IF_FAILED(ThemeAtlasLayout::Parse(bytes, document));
-
-	auto layoutMap = g_themeAtlasLayoutMap;
-	auto quirk = g_themeAtlasLayoutQuirk;
-	auto dontDeflateInactiveFrameGeometry = Shared::g_dontDeflateInactiveFrameGeometry;
-	auto captionHeight = Shared::g_captionHeight;
-	for (const auto& record : document.records)
+	WCHAR strideBuffer[255]{};
+	while (!feof(file))
 	{
-		if (const auto mapping = std::get_if<ThemeAtlasLayout::Mapping>(&record))
+		fgetws(strideBuffer, std::size(strideBuffer), file);
+
+		if (strideBuffer[0] != L'#')
 		{
-			auto part = mapping->part;
-			if (quirk == CompatibilityQuirk::RS1 && part > 10) --part;
-			layoutMap.try_emplace(
-				make_theme_atlas_layout_key(part, mapping->state, mapping->property),
-				MARGINS
+			MARGINS part{};
+			MARGINS data{};
+			WCHAR keyBuffer[64]{};
+			if (
+				swscanf_s(
+					strideBuffer,
+					L"%[^=]=%d,%d,%d,%d",
+					keyBuffer,
+					static_cast<unsigned int>(std::size(keyBuffer)),
+					&data.cxLeftWidth,
+					&data.cxRightWidth,
+					&data.cyTopHeight,
+					&data.cyBottomHeight
+				) == 5
+			)
+			{
+				swscanf_s(
+					keyBuffer,
+					L"%d;%d;%d",
+					&part.cxLeftWidth,
+					&part.cxRightWidth,
+					&part.cyTopHeight
+				);
+
+				if (g_themeAtlasLayoutQuirk == CompatibilityQuirk::RS1)
 				{
-					mapping->value[0],
-					mapping->value[1],
-					mapping->value[2],
-					mapping->value[3]
+					part.cxLeftWidth = part.cxLeftWidth > 10 ? part.cxLeftWidth - 1 : part.cxLeftWidth;
 				}
-			);
-			continue;
-		}
-
-		const auto& property = std::get<ThemeAtlasLayout::Property>(record);
-		if (property.name == "DontDeflateInactiveFrameGeometry")
-		{
-			dontDeflateInactiveFrameGeometry = property.value != 0;
-		}
-		else if (property.name == "RS1Compatibility")
-		{
-			if (property.value) quirk = CompatibilityQuirk::RS1;
-		}
-		else if (property.name == "CaptionHeight")
-		{
-			captionHeight = static_cast<DWORD>(property.value);
+				g_themeAtlasLayoutMap.try_emplace(
+					make_theme_atlas_layout_key(
+						part.cxLeftWidth,
+						part.cxRightWidth,
+						part.cyTopHeight
+					),
+					data
+				);
+			}
+			else if (
+				DWORD value{};
+				swscanf_s(
+					strideBuffer,
+					L"%[^=]=%d",
+					keyBuffer,
+					static_cast<unsigned int>(std::size(keyBuffer)),
+					&value
+				) == 2
+			)
+			{
+				if (!wcscmp(keyBuffer, L"DontDeflateInactiveFrameGeometry"))
+				{
+					Shared::g_dontDeflateInactiveFrameGeometry = static_cast<bool>(value);
+				}
+				else if (!wcscmp(keyBuffer, L"RS1Compatibility"))
+				{
+					g_themeAtlasLayoutQuirk = value ? CompatibilityQuirk::RS1 : g_themeAtlasLayoutQuirk;
+				}
+				else if (!wcscmp(keyBuffer, L"CaptionHeight"))
+				{
+					Shared::g_captionHeight = value;
+				}
+			}
 		}
 	}
-
-	g_themeAtlasLayoutMap = std::move(layoutMap);
-	g_themeAtlasLayoutQuirk = quirk;
-	Shared::g_dontDeflateInactiveFrameGeometry = dontDeflateInactiveFrameGeometry;
-	Shared::g_captionHeight = captionHeight;
-	return S_OK;
+	fclose(file);
 }
-CATCH_RETURN()
 
 HRESULT CustomThemeAtlasLoader::LoadTextGlowFromThemeAtlas()
 {
@@ -392,13 +406,29 @@ HRESULT CustomThemeAtlasLoader::LoadTextGlowFromThemeAtlas()
 	RETURN_HR_IF_NULL(E_OUTOFMEMORY, stream);
 	winrt::com_ptr<IWICImagingFactory> wicFactory{ nullptr };
 	wicFactory.copy_from(uDWM::CDesktopManager::GetInstance()->GetWICFactory());
+	winrt::com_ptr<IWICBitmapDecoder> wicDecoder{ nullptr };
+	RETURN_IF_FAILED(
+		wicFactory->CreateDecoderFromStream(
+			stream.get(),
+			&GUID_VendorMicrosoft,
+			WICDecodeMetadataCacheOnDemand,
+			wicDecoder.put()
+		)
+	);
+	winrt::com_ptr<IWICBitmapFrameDecode> wicFrame{ nullptr };
+	RETURN_IF_FAILED(wicDecoder->GetFrame(0, wicFrame.put()));
 	winrt::com_ptr<IWICFormatConverter> wicConverter{ nullptr };
-	RETURN_IF_FAILED(PngAssetValidation::CreateValidatedWicSource(
-		wicFactory.get(),
-		stream.get(),
-		g_themeAtlasInfo ? &*g_themeAtlasInfo : nullptr,
-		wicConverter.put()
-	));
+	RETURN_IF_FAILED(wicFactory->CreateFormatConverter(wicConverter.put()));
+	RETURN_IF_FAILED(
+		wicConverter->Initialize(
+			wicFrame.get(),
+			GUID_WICPixelFormat32bppPBGRA,
+			WICBitmapDitherTypeNone,
+			nullptr,
+			0,
+			WICBitmapPaletteTypeCustom
+		)
+	);
 
 	Shared::g_textGlowBitmapInfo =
 	{
@@ -436,14 +466,131 @@ HRESULT CustomThemeAtlasLoader::LoadTextGlowFromThemeAtlas()
 	return S_OK;
 }
 
+// windows 7 read the frame highlights from DWMWindow LEFTHIGHLIGHTCORNER (34) and SIDEHIGHLIGHT (43):
+// the atlas rect cut into 2 vertical tiles (active, inactive), OPACITY on the corner and the side and
+// SIZINGMARGINS on the side (uDWM 6.1.7762 CTopLevelWindow::GetNCAreaHelper / CreateBitmapsFromAtlasImageStrip).
+// corner states 3/4 are taken as maximized/inactive maximized, the same mapping the reflection opacity uses.
+// win10 gave 34/43 to other parts, so imported themes carry them as 95/96; LEFTHIGHLIGHTCORNERid / SIDEHIGHLIGHTid
+// override that. uDWM also shaved 1px off every tile, but the win7 art this renderer was tuned with is
+// the full tile, so the tiles stay whole here too.
+static HRESULT CopyHighlightStrip(
+	HTHEME theme,
+	IWICBitmapSource* atlas,
+	int partId,
+	Shared::HighlightStrip& strip
+)
+{
+	RECT rect{};
+	RETURN_IF_FAILED(CustomThemeAtlasLoader::MyGetThemeRect(theme, partId, 0, TMT_ATLASRECT, &rect));
+	UINT atlasWidth{}, atlasHeight{};
+	RETURN_IF_FAILED(atlas->GetSize(&atlasWidth, &atlasHeight));
+	const auto width = wil::rect_width(rect);
+	const auto frameHeight = wil::rect_height(rect) / 2;
+	RETURN_HR_IF(
+		E_INVALIDARG,
+		rect.left < 0 || rect.top < 0 || width <= 0 || frameHeight <= 0 ||
+		static_cast<UINT>(rect.right) > atlasWidth || static_cast<UINT>(rect.bottom) > atlasHeight
+	);
+
+	strip.width = static_cast<UINT>(width);
+	strip.frameHeight = static_cast<UINT>(frameHeight);
+	strip.pixels.resize(static_cast<size_t>(strip.width) * strip.frameHeight * 2 * 4);
+	const WICRect copyRect{ rect.left, rect.top, width, frameHeight * 2 };
+	RETURN_IF_FAILED(atlas->CopyPixels(&copyRect, strip.width * 4, static_cast<UINT>(strip.pixels.size()), strip.pixels.data()));
+	return S_OK;
+}
+
+void CustomThemeAtlasLoader::LoadHighlights()
+{
+	const auto style = static_cast<Shared::HighlightStyle>(std::clamp(GlassEngine::GetDwordFromRegistry(L"HighlightStyle", 0), 0ul, 2ul));
+	Shared::g_highlightStyle = style;
+
+	// windows 7 numbers, what this renderer always used. vista hides the corners on maximized windows.
+	Shared::g_highlightOpacity = style == Shared::HighlightStyle::WindowsVista ?
+		std::array<float, 4>{ .75f, .75f, 0.f, 0.f } :
+		std::array<float, 4>{ .75f, .75f, .75f, .75f };
+	Shared::g_sideHighlightOpacity = { 1.f, .5f };
+	Shared::g_sideHighlightSizingMargin = 2;
+	Shared::g_themeHighlightAssets.store(nullptr);
+
+	if (style == Shared::HighlightStyle::Msstyles && g_themeHandle && g_themeAtlasStreamSize)
+	{
+		const auto cornerId = static_cast<int>(GlassEngine::GetDwordFromRegistry(L"LEFTHIGHLIGHTCORNERid", 95));
+		const auto sideId = static_cast<int>(GlassEngine::GetDwordFromRegistry(L"SIDEHIGHLIGHTid", 96));
+		auto assets = std::make_shared<Shared::HighlightAssets>();
+
+		const auto loadFromAtlas = [&]() -> HRESULT
+		{
+			winrt::com_ptr<IStream> stream{ SHCreateMemStream(g_themeAtlasStream.get(), g_themeAtlasStreamSize), winrt::take_ownership_from_abi };
+			RETURN_HR_IF_NULL(E_OUTOFMEMORY, stream);
+			winrt::com_ptr<IWICImagingFactory> wicFactory{ nullptr };
+			wicFactory.copy_from(uDWM::CDesktopManager::GetInstance()->GetWICFactory());
+			winrt::com_ptr<IWICBitmapDecoder> wicDecoder{ nullptr };
+			RETURN_IF_FAILED(wicFactory->CreateDecoderFromStream(stream.get(), &GUID_VendorMicrosoft, WICDecodeMetadataCacheOnDemand, wicDecoder.put()));
+			winrt::com_ptr<IWICBitmapFrameDecode> wicFrame{ nullptr };
+			RETURN_IF_FAILED(wicDecoder->GetFrame(0, wicFrame.put()));
+			winrt::com_ptr<IWICFormatConverter> wicConverter{ nullptr };
+			RETURN_IF_FAILED(wicFactory->CreateFormatConverter(wicConverter.put()));
+			RETURN_IF_FAILED(wicConverter->Initialize(wicFrame.get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom));
+
+			// a missing or broken part only loses that part: it keeps the windows 7 art and numbers.
+			if (FAILED(CopyHighlightStrip(g_themeHandle.get(), wicConverter.get(), cornerId, assets->corner)))
+			{
+				assets->corner = {};
+			}
+			else
+			{
+				for (int state = 1; state <= 4; state++)
+				{
+					int opacity{};
+					if (SUCCEEDED(MyGetThemeInt(g_themeHandle.get(), cornerId, state, TMT_OPACITY, &opacity)))
+					{
+						Shared::g_highlightOpacity[state - 1] = std::clamp(static_cast<float>(opacity) / 100.f, 0.f, 1.f);
+					}
+				}
+			}
+
+			if (FAILED(CopyHighlightStrip(g_themeHandle.get(), wicConverter.get(), sideId, assets->side)))
+			{
+				assets->side = {};
+			}
+			else
+			{
+				for (int state = 1; state <= 2; state++)
+				{
+					int opacity{};
+					if (SUCCEEDED(MyGetThemeInt(g_themeHandle.get(), sideId, state, TMT_OPACITY, &opacity)))
+					{
+						Shared::g_sideHighlightOpacity[state - 1] = std::clamp(static_cast<float>(opacity) / 100.f, 0.f, 1.f);
+					}
+				}
+				MARGINS margins{};
+				if (SUCCEEDED(MyGetThemeMargins(g_themeHandle.get(), nullptr, sideId, 0, TMT_SIZINGMARGINS, nullptr, &margins)))
+				{
+					Shared::g_sideHighlightSizingMargin = std::clamp(margins.cyBottomHeight, 0, static_cast<int>(assets->side.frameHeight));
+				}
+			}
+			return S_OK;
+		};
+		LOG_IF_FAILED(loadFromAtlas());
+
+		if (!assets->corner.pixels.empty() || !assets->side.pixels.empty())
+		{
+			Shared::g_themeHighlightAssets.store(std::move(assets));
+		}
+	}
+
+	Shared::g_highlightGeneration++;
+}
+
 void CustomThemeAtlasLoader::LoadTheme(LPCWSTR themeAtlasPath, LPCWSTR themeAtlasLayoutPath)
 {
 	g_themeHandle.reset(OpenThemeData(nullptr, L"DWMWindow"));
 
 	if (SUCCEEDED(LoadThemeAtlas(themeAtlasPath)))
 	{
-		LOG_IF_FAILED(LoadThemeAtlasLayout(themeAtlasLayoutPath));
-		LOG_IF_FAILED(LoadTextGlowFromThemeAtlas());
+		LoadThemeAtlasLayout(themeAtlasLayoutPath);
+		LoadTextGlowFromThemeAtlas();
 	}
 }
 
@@ -465,6 +612,7 @@ void CustomThemeAtlasLoader::Update(GlassEngine::UpdateType type)
 			themeAtlasPath,
 			themeAtlasLayoutPath
 		);
+		LoadHighlights();
 	}
 	if (type & GlassEngine::UpdateType::Backdrop || type & GlassEngine::UpdateType::Theme)
 	{
@@ -718,7 +866,7 @@ void CustomThemeAtlasLoader::Update(GlassEngine::UpdateType type)
 void CustomThemeAtlasLoader::Startup()
 {
 	const auto build_before_w10_2004 = uDWM::g_versionInfo.build < os::build_w10_2004;
-	g_themeImportHook.Prepare(
+	HookHelper::PatchDelayloadIAT(
 		uDWM::g_moduleHandle,
 		std::initializer_list<HookHelper::ImportDllDetourInfo>
 		{
@@ -726,34 +874,52 @@ void CustomThemeAtlasLoader::Startup()
 				"ext-ms-win-uxtheme-themes-l1-1-0.dll",
 				std::initializer_list<HookHelper::ImportFunctionDetourInfo>
 				{
-					HookHelper::MakeImportDetour<&MyGetThemeMargins>("GetThemeMargins", &g_GetThemeMargins_Org),
-					HookHelper::MakeImportDetour<&MyGetThemeInt>("GetThemeInt", &g_GetThemeInt_Org),
-					HookHelper::MakeImportDetour<&MyGetThemeColor>("GetThemeColor", &g_GetThemeColor_Org)
+					{ "GetThemeMargins", &g_GetThemeMargins_Org, &MyGetThemeMargins },
+					{ "GetThemeInt", &g_GetThemeInt_Org, &MyGetThemeInt },
+					{ "GetThemeColor", &g_GetThemeColor_Org, &MyGetThemeColor }
 				}
 			},
 			{
 				build_before_w10_2004 ? "UxTheme.dll" : "ext-ms-win-uxtheme-themes-l1-1-2.dll",
 				std::initializer_list<HookHelper::ImportFunctionDetourInfo>
 				{
-					HookHelper::MakeImportDetour<&MyGetThemeStream>("GetThemeStream", &g_GetThemeStream_Org),
-					HookHelper::MakeImportDetour<&MyGetThemeRect>("GetThemeRect", &g_GetThemeRect_Org)
+					{ "GetThemeStream", &g_GetThemeStream_Org, &MyGetThemeStream },
+					{ "GetThemeRect", &g_GetThemeRect_Org, &MyGetThemeRect }
 				}
 			}
-		},
-		true
+		}
 	);
-	HookHelper::GetCurrentHookTransaction().Apply(g_themeImportHook);
-}
-void CustomThemeAtlasLoader::Activate()
-{
-	PostMessageW(GlassEngine::GetDwmNotificationWindow(), WM_THEMECHANGED, 0, 0);
+
+	PostMessageW(FindWindowW(L"DWM", nullptr), WM_THEMECHANGED, 0, 0);
 }
 void CustomThemeAtlasLoader::Shutdown()
 {
-	HookHelper::GetCurrentHookTransaction().Apply(g_themeImportHook);
-}
-void CustomThemeAtlasLoader::Deactivate()
-{
-	SendMessageW(GlassEngine::GetDwmNotificationWindow(), WM_THEMECHANGED, 0, 0);
+	const auto build_before_w10_2004 = uDWM::g_versionInfo.build < os::build_w10_2004;
+	HookHelper::PatchDelayloadIAT(
+		uDWM::g_moduleHandle,
+		std::initializer_list<HookHelper::ImportDllDetourInfo>
+		{
+			{
+				"ext-ms-win-uxtheme-themes-l1-1-0.dll",
+				std::initializer_list<HookHelper::ImportFunctionDetourInfo>
+				{
+					{ "GetThemeMargins", &g_GetThemeMargins_Org, g_GetThemeMargins_Org },
+					{ "GetThemeInt", &g_GetThemeInt_Org, g_GetThemeInt_Org },
+					{ "GetThemeColor", &g_GetThemeColor_Org, g_GetThemeColor_Org }
+				}
+			},
+			{
+				build_before_w10_2004 ? "UxTheme.dll" : "ext-ms-win-uxtheme-themes-l1-1-2.dll",
+				std::initializer_list<HookHelper::ImportFunctionDetourInfo>
+				{
+					{ "GetThemeStream", &g_GetThemeStream_Org, g_GetThemeStream_Org },
+					{ "GetThemeRect", &g_GetThemeRect_Org, g_GetThemeRect_Org }
+				}
+			}
+		}
+	);
+
+	SendMessageW(FindWindowW(L"DWM", nullptr), WM_THEMECHANGED, 0, 0);
+
 	UnloadTheme();
 }
