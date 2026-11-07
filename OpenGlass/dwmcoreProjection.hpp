@@ -947,8 +947,8 @@ namespace OpenGlass::dwmcore
 		MAKE_EMPTY_PROJECTION_TUPLE("CDrawingContext::DrawVisualTree", 0, 0),
 		MAKE_EMPTY_PROJECTION_TUPLE("CDrawingContext::PreSubgraph", 0, 0),
 
-		MAKE_OPTIONAL_EMPTY_PROJECTION_TUPLE_BY_ALIAS("COcclusionContext::CheckAndRecordOverlayCandidate", 0, 0),
-		MAKE_OPTIONAL_EMPTY_PROJECTION_TUPLE_BY_ALIAS("COcclusionContext::CollectRectangleForOcclusion", 0, 0),
+		MAKE_EMPTY_PROJECTION_TUPLE("COverlayContext::EndOverlayCandidateCollection", 0, os::build_w11_24h2),
+		MAKE_OPTIONAL_EMPTY_PROJECTION_TUPLE_BY_ALIAS("COverlayContext::IsCandidateOverlayCompatible", os::build_w11_24h2, 0),
 		
 		MAKE_FUNCTION_PROJECTION_TUPLE(COcclusionContext::SetDeviceTransform, 0, 0),
 		MAKE_EMPTY_PROJECTION_TUPLE("COcclusionContext::IsOccluded", os::build_w11_24h2, 0),

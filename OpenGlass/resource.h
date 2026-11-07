@@ -31,10 +31,6 @@
 #define IDB_SIDEHIGHLIGHT               121
 #define IDB_HIGHLIGHT_VISTA             122
 
-// Pre-resolved symbol catalogs (RCDATA), optional fallback when a PDB is unavailable.
-#define IDR_SYMBOLCATALOG_UDWM          130
-#define IDR_SYMBOLCATALOG_DWMCORE       131
-
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

@@ -868,11 +868,6 @@ void GlassKernel::Update(GlassEngine::UpdateType type)
 
 void GlassKernel::Startup()
 {
-	if (Shared::g_disabledHooks.test(Shared::DisabledHooks_GlassKernel))
-	{
-		return;
-	}
-
 	winrt::com_ptr<IDCompositionDesktopDevice> dcompDevice{ nullptr };
 	THROW_IF_FAILED(uDWM::CDesktopManager::GetInstance()->GetInteropCompositorDCompDevicePartner()->QueryInterface(dcompDevice.put()));
 	g_IDCompositionDesktopDevice_WaitForCommitCompletion_Org_Address = reinterpret_cast<decltype(g_IDCompositionDesktopDevice_WaitForCommitCompletion_Org_Address)>(&(HookHelper::get_vftable_from(dcompDevice.get())[4]));

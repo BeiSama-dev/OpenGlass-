@@ -433,4 +433,3 @@ FodyWeavers.xsd
 vcpkg_installed/
 OpenGlassTest/OpenGlassTest.png
 *.cso
-symbols/

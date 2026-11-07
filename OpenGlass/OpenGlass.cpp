@@ -6,7 +6,6 @@
 #include "HookHelper.hpp"
 #include "SymbolParser.hpp"
 #include "SymbolDownloader.hpp"
-#include "SymbolCatalog.hpp"
 #include "OSHelper.hpp"
 #include "uDWMProjection.hpp"
 #include "dwmcoreProjection.hpp"
@@ -290,37 +289,39 @@ void OpenGlass::SymbolDownloaderCallback(const CDownloadProgress& progress)
 	}
 }
 
-namespace
-{
-	// non-blocking session message; DWM must never wait for a user answer
-	void NotifySessionUser(std::wstring_view title, std::wstring_view content, UINT flags)
-	{
-		DWORD sessionId{};
-		if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId))
-		{
-			return;
-		}
-
-		DWORD response{ 0 };
-		WTSSendMessageW(
-			WTS_CURRENT_SERVER_HANDLE,
-			sessionId,
-			const_cast<LPWSTR>(title.data()),
-			static_cast<DWORD>(title.size() * sizeof(WCHAR)),
-			const_cast<LPWSTR>(content.data()),
-			static_cast<DWORD>(content.size() * sizeof(WCHAR)),
-			flags,
-			0,
-			&response,
-			FALSE
-		);
-	}
-}
-
 bool OpenGlass::InitializeProjectionBySymbols()
-try
 {
 	const auto mainInstruction = Util::GetResourceStringView<IDS_STRING101>();
+	const auto expandText = Util::GetResourceStringView<IDS_STRING103>();
+	const auto collapseText = Util::GetResourceStringView<IDS_STRING104>();
+	int result{ 0 };
+	TASKDIALOGCONFIG config
+	{
+		sizeof(TASKDIALOGCONFIG),
+		nullptr,
+		nullptr,
+		TDF_SIZE_TO_CONTENT | TDF_EXPAND_FOOTER_AREA | TDF_ALLOW_DIALOG_CANCELLATION,
+		TDCBF_RETRY_BUTTON | TDCBF_CANCEL_BUTTON,
+		nullptr,
+		{.pszMainIcon{TD_ERROR_ICON}},
+		mainInstruction.data(),
+		nullptr,
+		0,
+		nullptr,
+		0,
+		0,
+		nullptr,
+		0,
+		nullptr,
+		nullptr,
+		collapseText.data(),
+		expandText.data(),
+		{},
+		nullptr,
+		nullptr,
+		0,
+		0
+	};
 
 	{
 		const auto asyncUICleanup = wil::scope_exit([]
@@ -336,16 +337,13 @@ try
 		// Keep writable caches out of the installation root.
 		// The installer grants Window Manager (S-1-5-90-0) write permissions to this subdirectory.
 		const auto symbolPath = Util::make_current_folder_file(L"symbols");
-		// 不抛异常：目录已存在是正常情况
 		if (!PathFileExistsW(symbolPath.get()))
 		{
-			if (!CreateDirectoryW(symbolPath.get(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
-			{
-				THROW_WIN32_MSG(GetLastError(), "Failed to create symbol cache directory");
-			}
+			wil::CreateDirectoryDeep(symbolPath.get());
 		}
 		const auto symbolServerBase = L"https://msdl.microsoft.com/download/symbols/";
 		const auto downloader = std::make_unique<CSymbolDownloader>();
+		const auto parser = std::make_unique<CSymbolParser>(symbolPath.get());
 		HRESULT hr{ S_OK };
 
 		const auto showSymbolDownloaderUI = []()
@@ -372,21 +370,13 @@ try
 			}
 		};
 
-		std::wstring udwmSymbolDirectory{ symbolPath.get() };
-		std::wstring dwmcoreSymbolDirectory{ symbolPath.get() };
-
-		// Keep the shipped layout: a single writable symbols directory. The installer grants
-		// the Window Manager account write access to this directory only, so caching into a
-		// freshly created subdirectory fails the download when the ACL is not inherited.
-		CSymbolParser parser{ symbolPath.get() };
-
 		for(;;)
 		{
 			g_progressPreviouslyCompleted = 0;
 			g_symbolDownloadCompleted = false;
 			g_symbolRequiresDownloading = false;
 			g_detailsInfo.clear();
-			hr = parser.ParsePdb(udwmModuleHandle, uDWM::SymbolParserCallback);
+			hr = parser->ParsePdb(udwmModuleHandle, uDWM::SymbolParserCallback);
 			if (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
 			{
 				showSymbolDownloaderUI();
@@ -395,7 +385,7 @@ try
 					*downloader,
 					udwmModuleHandle,
 					symbolServerBase,
-					udwmSymbolDirectory.c_str(),
+					symbolPath.get(),
 					&g_downloaderContext,
 					SymbolDownloaderCallback
 				).get();
@@ -407,27 +397,11 @@ try
 					g_progressCompleted = g_progressPreviouslyCompleted + 100;
 					g_currentlyDownloadingSymbol = {};
 					g_symbolDownloadCompleted = true;
-					hr = parser.ParsePdb(udwmModuleHandle, uDWM::SymbolParserCallback);
+					hr = parser->ParsePdb(udwmModuleHandle, uDWM::SymbolParserCallback);
 				}
 			}
 			if (FAILED(hr))
 			{
-				// Fallback of last resort: the PDB is unavailable (a revision whose symbols are
-				// missing from the Microsoft server, or no network). Use the pre-resolved catalog
-				// when its PDB identity matches this module.
-				{
-					std::wstring catalogPath{ symbolPath.get() };
-					catalogPath.append(L"\\catalog\\udwm.json");
-					if (
-						SymbolCatalog::TryApplyFromResource(uDWM::g_projectionArray, udwmModuleHandle, IDR_SYMBOLCATALOG_UDWM) != 0 ||
-						SymbolCatalog::TryApplyFromFile(uDWM::g_projectionArray, udwmModuleHandle, catalogPath.c_str()) != 0
-					)
-					{
-						hr = S_OK;
-						break;
-					}
-				}
-
 				const auto contentTemplate = g_symbolRequiresDownloading && !g_symbolDownloadCompleted ? Util::GetResourceStringView<IDS_STRING106>() : Util::GetResourceStringView<IDS_STRING107>();
 				const auto buffSize = contentTemplate.size() + 8ull;
 				const auto content = std::make_unique_for_overwrite<WCHAR[]>(buffSize);
@@ -438,10 +412,22 @@ try
 					hr
 				);
 
-				// fail fast; the host retries on its own
 				g_status = DownloaderStatus::Error;
-				NotifySessionUser(mainInstruction, content.get(), MB_ICONERROR | MB_OK);
-				return false;
+				config.hwndParent = g_symbolDownloaderHwnd;
+				config.pszContent = content.get();
+				config.pszExpandedInformation = g_detailsInfo.c_str();
+				THROW_IF_FAILED(
+					TaskDialogIndirect(
+						&config,
+						&result,
+						nullptr,
+						nullptr
+					)
+				);
+				if (result != IDRETRY)
+				{
+					return false;
+				}
 			}
 			else
 			{
@@ -455,7 +441,7 @@ try
 			g_symbolDownloadCompleted = false;
 			g_symbolRequiresDownloading = false;
 			g_detailsInfo.clear();
-			hr = parser.ParsePdb(dwmcoreModuleHandle, dwmcore::SymbolParserCallback);
+			hr = parser->ParsePdb(dwmcoreModuleHandle, dwmcore::SymbolParserCallback);
 			if (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
 			{
 				showSymbolDownloaderUI();
@@ -464,7 +450,7 @@ try
 					*downloader,
 					dwmcoreModuleHandle,
 					symbolServerBase,
-					dwmcoreSymbolDirectory.c_str(),
+					symbolPath.get(),
 					&g_downloaderContext,
 					SymbolDownloaderCallback
 				).get();
@@ -476,24 +462,11 @@ try
 					g_progressCompleted = g_progressPreviouslyCompleted + 100;
 					g_currentlyDownloadingSymbol = {};
 					g_symbolDownloadCompleted = true;
-					hr = parser.ParsePdb(dwmcoreModuleHandle, dwmcore::SymbolParserCallback);
+					hr = parser->ParsePdb(dwmcoreModuleHandle, dwmcore::SymbolParserCallback);
 				}
 			}
 			if (FAILED(hr))
 			{
-				{
-					std::wstring catalogPath{ symbolPath.get() };
-					catalogPath.append(L"\\catalog\\dwmcore.json");
-					if (
-						SymbolCatalog::TryApplyFromResource(dwmcore::g_projectionArray, dwmcoreModuleHandle, IDR_SYMBOLCATALOG_DWMCORE) != 0 ||
-						SymbolCatalog::TryApplyFromFile(dwmcore::g_projectionArray, dwmcoreModuleHandle, catalogPath.c_str()) != 0
-					)
-					{
-						hr = S_OK;
-						break;
-					}
-				}
-
 				const auto contentTemplate = g_symbolRequiresDownloading && !g_symbolDownloadCompleted ? Util::GetResourceStringView<IDS_STRING106>() : Util::GetResourceStringView<IDS_STRING107>();
 				const auto buffSize = contentTemplate.size() + 8ull;
 				const auto content = std::make_unique_for_overwrite<WCHAR[]>(buffSize);
@@ -504,10 +477,22 @@ try
 					hr
 				);
 
-				// fail fast; the host retries on its own
 				g_status = DownloaderStatus::Error;
-				NotifySessionUser(mainInstruction, content.get(), MB_ICONERROR | MB_OK);
-				return false;
+				config.hwndParent = g_symbolDownloaderHwnd;
+				config.pszContent = content.get();
+				config.pszExpandedInformation = g_detailsInfo.c_str();
+				THROW_IF_FAILED(
+					TaskDialogIndirect(
+						&config,
+						&result,
+						nullptr,
+						nullptr
+					)
+				);
+				if (result != IDRETRY)
+				{
+					return false;
+				}
 			}
 			else
 			{
@@ -528,20 +513,24 @@ try
 		std::unique_ptr<WCHAR[]> convertedMissingInfo{};
 		THROW_IF_FAILED(Util::MB2WC(convertedMissingInfo, missingFunctionsOrVariables.c_str(), static_cast<int>(missingFunctionsOrVariables.size())));
 
-		std::wstring message{ content.data(), content.size() };
-		message.append(L"\n\n");
-		message.append(convertedMissingInfo.get());
-		NotifySessionUser(mainInstruction, message, MB_ICONERROR | MB_OK);
+		config.hwndParent = nullptr;
+		config.pszMainInstruction = mainInstruction.data();
+		config.pszContent = content.data();
+		config.pszExpandedInformation = convertedMissingInfo.get();
+		config.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+		THROW_IF_FAILED(
+			TaskDialogIndirect(
+				&config,
+				&result,
+				nullptr,
+				nullptr
+			)
+		);
 
 		return false;
 	}
 
 	return true;
-}
-catch (...)
-{
-	// Never let a symbol load failure take the whole compositor down.
-	return false;
 }
 
 DWORD WINAPI OpenGlass::InitializationThreadEntryPoint(PVOID)
@@ -568,18 +557,11 @@ void OpenGlass::Startup()
 {
 	if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
 	{
-		FreeLibraryAndExitThread(wil::GetModuleInstanceHandle(), S_OK);
+		return;
 	}
 
-	// 等待 DWM 通知窗口，最多 30 秒
-	for (auto attempt = 0; attempt < 600 && !(g_notificationWindow = FindWindowW(L"DWM", nullptr)); ++attempt)
-	{
-		Sleep(50);
-	}
-	if (!g_notificationWindow)
-	{
-		FreeLibraryAndExitThread(wil::GetModuleInstanceHandle(), S_OK);
-	}
+	// just wait patiently, in case the dwm notification window is not ready...
+	while (!(g_notificationWindow = FindWindowW(L"DWM", nullptr))) { Sleep(50); }
 
 	wil::SetResultLoggingCallback([](const wil::FailureInfo& failure) static noexcept
 	{
@@ -600,29 +582,33 @@ void OpenGlass::Startup()
 		{
 			os::build_w10_1809,
 			os::build_w10_1903,
-			os::build_w10_1909,
-			os::build_w10_20h2,
-			os::build_w10_21h1,
-			os::build_w10_21h2,
-			os::build_w10_22h2,
 			os::build_w10_2004,
 			os::build_server_2022,
 			os::build_w11_21h2,
 			os::build_w11_22h2,
-			os::build_w11_23h2,
 			os::build_w11_24h2,
-			os::build_w11_25h2,
-			os::build_w11_26h2,
 		};
 		std::find(supportList.begin(), supportList.end(), uDWM::g_versionInfo.build) == supportList.end() ||
 		std::find(supportList.begin(), supportList.end(), dwmcore::g_versionInfo.build) == supportList.end()
 	)
 	{
-		NotifySessionUser(
-			Util::GetResourceStringView<IDS_STRING101>(),
-			Util::GetResourceStringView<IDS_STRING105>(),
-			MB_ICONWARNING | MB_OK
+		auto result = 0;
+		THROW_IF_FAILED(
+			Util::TaskDialog(
+				nullptr,
+				nullptr,
+				nullptr,
+				Util::GetResourceStringView<IDS_STRING101>().data(),
+				Util::GetResourceStringView<IDS_STRING105>().data(),
+				TDCBF_YES_BUTTON | TDCBF_NO_BUTTON,
+				TD_WARNING_ICON,
+				&result
+			)
 		);
+		if (result != IDYES)
+		{
+			return;
+		}
 	}
 
 	//SYSTEM_POWER_CAPABILITIES powerCaps{};
@@ -633,8 +619,7 @@ void OpenGlass::Startup()
 
 	if (!InitializeProjectionBySymbols())
 	{
-		// 卸载并退出，交给服务端下一轮重试
-		FreeLibraryAndExitThread(wil::GetModuleInstanceHandle(), S_OK);
+		return;
 	}
 
 	GlassEngine::LoadRegistry(false);

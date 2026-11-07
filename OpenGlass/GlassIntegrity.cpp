@@ -13,21 +13,19 @@ using namespace OpenGlass;
 
 namespace OpenGlass::GlassIntegrity
 {
-	HRESULT MyCOcclusionContext_CheckAndRecordOverlayCandidate(
-		dwmcore::COcclusionContext* This,
-		dwmcore::CVisual* visual,
-		void* surface,
-		const dwmcore::CMILMatrix* matrix,
-		const dwmcore::CShape* shape,
-		int flags
-	);
-	HRESULT MyCOcclusionContext_CollectRectangleForOcclusion(
-		dwmcore::COcclusionContext* This,
-		const D2D1_RECT_F* rectangle,
+	void MyCOverlayContext_EndOverlayCandidateCollection_Pre_W10_2004(
+		dwmcore::COverlayContext* This,
+		void* param1,
+		void* param2,
 		void* param3,
-		void* param4,
-		D2D1_RECT_F* param5
+		void* param4
 	);
+	void MyCOverlayContext_EndOverlayCandidateCollection(
+		dwmcore::COverlayContext* This,
+		void* param1,
+		void* param2
+	);
+	bool MyCOverlayContext_IsCandidateOverlayCompatible(...) { return false; }
 
 	HRESULT MyCOcclusionContext_Compute_Pre_W10_2004(
 		dwmcore::COcclusionContext* This,
@@ -170,16 +168,12 @@ namespace OpenGlass::GlassIntegrity
 		dwmcore::CVisual* visualOverride
 	);
 
-	decltype(&MyCOcclusionContext_CheckAndRecordOverlayCandidate) g_COcclusionContext_CheckAndRecordOverlayCandidate_Org{ nullptr };
-	union CollectRectangleForOcclusionOriginal
+	static union
 	{
-		decltype(&MyCOcclusionContext_CollectRectangleForOcclusion) generic{ nullptr };
-		HRESULT(*pre22000)(dwmcore::COcclusionContext*, const D2D1_RECT_F*, bool, D2D1_RECT_F*);
-		void(*w11_22000)(dwmcore::COcclusionContext*, const D2D1_RECT_F*, bool, bool, D2D1_RECT_F*);
-		void(*w11_24h2_pre7840)(dwmcore::COcclusionContext*, const D2D1_RECT_F&, D2D1_RECT_F*);
-		void(*w11_24h2_7840)(dwmcore::COcclusionContext*, const D2D1_RECT_F&, bool, D2D1_RECT_F*);
+		decltype(&MyCOverlayContext_EndOverlayCandidateCollection_Pre_W10_2004) g_COverlayContext_EndOverlayCandidateCollection_Pre_W10_2004_Org;
+		decltype(&MyCOverlayContext_EndOverlayCandidateCollection) g_COverlayContext_EndOverlayCandidateCollection_Org{ nullptr };
 	};
-	CollectRectangleForOcclusionOriginal g_COcclusionContext_CollectRectangleForOcclusion_Org{};
+	decltype(&MyCOverlayContext_IsCandidateOverlayCompatible) g_COverlayContext_IsCandidateOverlayCompatible_Org{ nullptr };
 
 	static union
 	{
@@ -288,24 +282,7 @@ namespace OpenGlass::GlassIntegrity
 	};
 	uint8_t* g_COcclusionContext_IsDeviceTransformAssigned_PatchLocation = nullptr;
 
-	bool g_mpoCandidateFiltering{ true };
-
-	struct CCollectedOcclusionRectangle
-	{
-		dwmcore::COcclusionContext* context{};
-		D2D1_RECT_F rectangle{};
-		int depth{ -1 };
-	};
-	CCollectedOcclusionRectangle g_lastCollectedOcclusionRectangle{};
-
-	enum class CollectRectangleForOcclusionAbi : UCHAR
-	{
-		Pre_22000,
-		W11_22000,
-		W11_24H2_Pre7840,
-		W11_24H2_7840
-	};
-	CollectRectangleForOcclusionAbi g_collectRectangleForOcclusionAbi{ CollectRectangleForOcclusionAbi::W11_24H2_7840 };
+	bool g_disqualifyingOccludedCandidates{};
 
 	struct CoverageSetCheckpoint
 	{
@@ -314,66 +291,6 @@ namespace OpenGlass::GlassIntegrity
 		std::unordered_map<dwmcore::CZOrderedRectBase*, D2D1_RECT_F> saves;
 	};
 	std::unordered_map<dwmcore::CArrayBasedCoverageSet*, CoverageSetCheckpoint> g_coverageSetCheckpointMap;
-
-	void CaptureCollectedOcclusionRectangle(
-		dwmcore::COcclusionContext* occlusionContext,
-		const D2D1_RECT_F* rectangle
-	)
-	{
-		g_lastCollectedOcclusionRectangle = {};
-		if (rectangle)
-		{
-			g_lastCollectedOcclusionRectangle = {
-				occlusionContext,
-				*rectangle,
-				static_cast<int>(occlusionContext->GetCurrentZ())
-			};
-		}
-	}
-
-	bool IsOverlayCandidateCoveredByGlass(
-		dwmcore::COcclusionContext* occlusionContext,
-		const dwmcore::CShape* shape
-	)
-	{
-		const auto collected = g_lastCollectedOcclusionRectangle;
-		g_lastCollectedOcclusionRectangle = {};
-
-		if (!GlassKernel::GetBlurRadius())
-		{
-			return false;
-		}
-
-		const auto depth = static_cast<int>(occlusionContext->GetCurrentZ());
-		D2D1_RECT_F deviceBounds{};
-		if (shape)
-		{
-			D2D1_RECT_F bounds{};
-			if (SUCCEEDED(shape->GetTightBounds(&bounds, occlusionContext->GetWorldTransform())))
-			{
-				deviceBounds = occlusionContext->PageInPixelsRectToDeviceRect(bounds);
-			}
-		}
-		else if (
-			collected.context == occlusionContext &&
-			collected.depth == depth
-		)
-		{
-			const auto worldBounds = RectF::TransformRect(
-				collected.rectangle,
-				occlusionContext->GetWorldTransform()->GetD2DMatrix()
-			);
-			deviceBounds = occlusionContext->PageInPixelsRectToDeviceRect(worldBounds);
-		}
-
-		if (wil::rect_is_empty(deviceBounds))
-		{
-			return false;
-		}
-
-		const auto glassCoverageSet = CArrayBasedGlassCoverageSet::GetOrCreate(occlusionContext->GetArrayBasedCoverageSet());
-		return glassCoverageSet && glassCoverageSet->IsPartiallyCovered(deviceBounds, depth);
-	}
 }
 
 void GlassIntegrity::ShrinkOccludersAboveGlass(dwmcore::COcclusionContext* occlusionContext)
@@ -540,77 +457,47 @@ void GlassIntegrity::FlipOccludersCheckpoint(dwmcore::CArrayBasedCoverageSet* co
 	}
 }
 
-HRESULT GlassIntegrity::MyCOcclusionContext_CollectRectangleForOcclusion(
-	dwmcore::COcclusionContext* This,
-	const D2D1_RECT_F* rectangle,
+// HACK: we didnt define full COverlayContext::EndOverlayCandidateCollection according to the actual implementation,
+// but its fine since we just want to set a flag before the original function is called and reset it after the original function returns,
+// and we dont need to change the parameters or the return value,
+// so we can just define it with the same parameters as the original function in all versions for simplicity,
+// and then call the original function in the middle without worrying about the parameters
+void GlassIntegrity::MyCOverlayContext_EndOverlayCandidateCollection_Pre_W10_2004(
+	dwmcore::COverlayContext* This,
+	void* param1,
+	void* param2,
 	void* param3,
-	void* param4,
-	D2D1_RECT_F* param5
+	void* param4
 )
 {
-	CaptureCollectedOcclusionRectangle(This, rectangle);
-
-	switch (g_collectRectangleForOcclusionAbi)
-	{
-	case CollectRectangleForOcclusionAbi::Pre_22000:
-		return g_COcclusionContext_CollectRectangleForOcclusion_Org.pre22000(
-			This,
-			rectangle,
-			param3 != nullptr,
-			static_cast<D2D1_RECT_F*>(param4)
-		);
-	case CollectRectangleForOcclusionAbi::W11_22000:
-		g_COcclusionContext_CollectRectangleForOcclusion_Org.w11_22000(
-			This,
-			rectangle,
-			param3 != nullptr,
-			param4 != nullptr,
-			param5
-		);
-		return S_OK;
-	case CollectRectangleForOcclusionAbi::W11_24H2_Pre7840:
-		g_COcclusionContext_CollectRectangleForOcclusion_Org.w11_24h2_pre7840(
-			This,
-			*rectangle,
-			static_cast<D2D1_RECT_F*>(param3)
-		);
-		return S_OK;
-	default:
-		g_COcclusionContext_CollectRectangleForOcclusion_Org.w11_24h2_7840(
-			This,
-			*rectangle,
-			param3 != nullptr,
-			static_cast<D2D1_RECT_F*>(param4)
-		);
-		return S_OK;
-	}
-}
-
-HRESULT GlassIntegrity::MyCOcclusionContext_CheckAndRecordOverlayCandidate(
-	dwmcore::COcclusionContext* This,
-	dwmcore::CVisual* visual,
-	void* surface,
-	const dwmcore::CMILMatrix* matrix,
-	const dwmcore::CShape* shape,
-	int flags
-)
-{
-	if (
-		!g_mpoCandidateFiltering ||
-		IsOverlayCandidateCoveredByGlass(This, shape)
-	)
-	{
-		return S_OK;
-	}
-
-	return g_COcclusionContext_CheckAndRecordOverlayCandidate_Org(
+	// here we fool COverlayContext into thinking that candidates are occluded,
+	// so that the candidates will be disqualified and won't be used for mpo, thus preventing #30 and #200 from happening.
+	//
+	// Since the candidates are disqualified only if there are visible glass regions above them,
+	// this won't cause any performance regression when glass is not visible
+	g_disqualifyingOccludedCandidates = true;
+	g_COverlayContext_EndOverlayCandidateCollection_Pre_W10_2004_Org(
 		This,
-		visual,
-		surface,
-		matrix,
-		shape,
-		flags
+		param1,
+		param2,
+		param3,
+		param4
 	);
+	g_disqualifyingOccludedCandidates = false;
+}
+void GlassIntegrity::MyCOverlayContext_EndOverlayCandidateCollection(
+	dwmcore::COverlayContext* This,
+	void* param1,
+	void* param2
+)
+{
+	g_disqualifyingOccludedCandidates = true;
+	g_COverlayContext_EndOverlayCandidateCollection_Org(
+		This,
+		param1,
+		param2
+	);
+	g_disqualifyingOccludedCandidates = false;
 }
 
 HRESULT GlassIntegrity::MyCOcclusionContext_Compute_Pre_W10_2004(
@@ -871,10 +758,6 @@ HRESULT GlassIntegrity::MyCOcclusionContext_SetDeviceTransform(
 
 void GlassIntegrity::MyCOcclusionContext_Destructor(dwmcore::COcclusionContext* This)
 {
-	if (g_lastCollectedOcclusionRectangle.context == This)
-	{
-		g_lastCollectedOcclusionRectangle = {};
-	}
 	CArrayBasedGlassCoverageSet::Remove(This->GetArrayBasedCoverageSet());
 	g_coverageSetCheckpointMap.erase(This->GetArrayBasedCoverageSet());
 	g_shrunkCoverageSetMap.erase(This);
@@ -889,6 +772,23 @@ bool GlassIntegrity::MyCArrayBasedCoverageSet_IsCovered(
 )
 {
 	FlipOccludersCheckpointScoped(This);
+
+	if (g_disqualifyingOccludedCandidates)
+	{
+		auto covered = g_CArrayBasedCoverageSet_IsCovered_Org(This, coverage, depth);
+		if (!covered)
+		{
+			if (
+				const auto glassCoverageSet = CArrayBasedGlassCoverageSet::GetOrCreate(This);
+				glassCoverageSet
+			)
+			{
+				covered = glassCoverageSet->IsPartiallyCovered(coverage, depth);
+			}
+		}
+
+		return covered;
+	}
 
 	const auto expansion = GlassKernel::GetBlurRadius();
 	if (!expansion || !g_calculationContext.IsActive())
@@ -994,6 +894,22 @@ bool GlassIntegrity::MyCOcclusionContext_IsOccluded(
 		ignoreDeviceTransform
 	);
 
+	if (g_disqualifyingOccludedCandidates)
+	{
+		if (!occluded)
+		{
+			if (
+				const auto glassCoverageSet = CArrayBasedGlassCoverageSet::GetOrCreate(This->GetArrayBasedCoverageSet());
+				glassCoverageSet
+			)
+			{
+				occluded = glassCoverageSet->IsPartiallyCovered(This->PageInPixelsRectToDeviceRect(coverage), depth);
+			}
+		}
+
+		return occluded;
+	}
+
 	const auto expansion = GlassKernel::GetBlurRadius();
 	if (!expansion || !g_calculationContext.IsActive())
 	{
@@ -1038,58 +954,27 @@ HRESULT GlassIntegrity::MyCOcclusionContext_PageInPixelsRectToDeviceRect(
 	D2D1_RECT_F* dst
 )
 {
-	const auto invokeOriginal = [This](const D2D1_RECT_F& candidate, D2D1_RECT_F* result)
-	{
-		return g_COcclusionContext_PageInPixelsRectToDeviceRect_Org(This, candidate, result);
-	};
-
 	if (g_calculationContext.IsActive())
 	{
 		g_calculationContext.dirtyRect = const_cast<D2D1_RECT_F*>(&src);
-
-		if (const auto expansion = GlassKernel::GetBlurRadius(); expansion)
+		if (
+			const auto expansion = GlassKernel::GetBlurRadius();
+			expansion &&
+			!Util::VersionBefore<os::build_w11_24h2, os::revision_24h2_with_25h2_code_staged>(dwmcore::g_versionInfo.build, dwmcore::g_versionInfo.revision)
+		)
 		{
-			if (
-				Util::VersionBefore<os::build_w11_24h2, os::revision_24h2_page_in_pixels_helper_reemitted>(
-					dwmcore::g_versionInfo.build,
-					dwmcore::g_versionInfo.revision
-				)
-			)
-			{
-				g_calculationContext.dirtyRect->left -= expansion;
-				g_calculationContext.dirtyRect->top -= expansion;
-				g_calculationContext.dirtyRect->right += expansion;
-				g_calculationContext.dirtyRect->bottom += expansion;
-			}
-			else
-			{
-				const D2D1_RECT_F extendedDirtyRect
-				{
-					src.left - expansion,
-					src.top - expansion,
-					src.right + expansion,
-					src.bottom + expansion
-				};
-				D2D1_RECT_F extendedDeviceRect{};
-				const auto extendedResult = invokeOriginal(extendedDirtyRect, &extendedDeviceRect);
-				bool useExtendedDirtyRect{ static_cast<bool>(extendedResult) };
-				if (useExtendedDirtyRect && g_glassSafetyZoneMode != GlassSafetyZoneMode::Always)
-				{
-					const auto coverageSet = This->GetArrayBasedCoverageSet();
-					const auto glassCoverageSet = CArrayBasedGlassCoverageSet::GetOrCreate(coverageSet);
-					useExtendedDirtyRect = glassCoverageSet && glassCoverageSet->IsVisible(extendedDeviceRect, coverageSet);
-				}
-				if (useExtendedDirtyRect)
-				{
-					*g_calculationContext.dirtyRect = extendedDirtyRect;
-					*dst = extendedDeviceRect;
-					return extendedResult;
-				}
-			}
+			g_calculationContext.dirtyRect->left -= expansion;
+			g_calculationContext.dirtyRect->top -= expansion;
+			g_calculationContext.dirtyRect->right += expansion;
+			g_calculationContext.dirtyRect->bottom += expansion;
 		}
 	}
 
-	return invokeOriginal(src, dst);
+	return g_COcclusionContext_PageInPixelsRectToDeviceRect_Org(
+		This,
+		src,
+		dst
+	);
 }
 
 HRESULT GlassIntegrity::MyCHwndRenderTarget_RenderDirtyRegion(
@@ -1485,37 +1370,34 @@ void GlassIntegrity::Update([[maybe_unused]] GlassEngine::UpdateType type)
 	if (type & GlassEngine::UpdateType::Backdrop)
 	{
 		g_glassSafetyZoneMode = static_cast<GlassSafetyZoneMode>(std::clamp(GlassEngine::GetDwordFromRegistry(L"GlassSafetyZoneMode", 1), 0ul, 2ul));
-		g_mpoCandidateFiltering = GlassEngine::GetDwordFromRegistry(L"EnableMpoCandidateFiltering", 1) != 0;
 	}
 }
 
 void GlassIntegrity::Startup()
 {
-	if (Shared::g_disabledHooks.test(Shared::DisabledHooks_GlassIntegrity))
-	{
-		return;
-	}
-
-	// CArrayBasedCoverageSet::IsCovered 解析不到时整个模块不挂钩
-	{
-		dwmcore::g_projectionArray.ApplyToVariable("CArrayBasedCoverageSet::IsCovered", g_CArrayBasedCoverageSet_IsCovered_Org);
-		if (!g_CArrayBasedCoverageSet_IsCovered_Org)
-		{
-			Shared::g_coverageSetIsCoveredHooked = false;
-			return;
-		}
-		// 上游 3.x 已删除翻转/还原补丁；该版本起默认关闭，可用注册表强制打开
-		const auto coverageSetHookDefault = dwmcore::g_versionInfo.build >= os::build_flip_occluders_removed ? 1ul : 0ul;
-		Shared::g_coverageSetIsCoveredHooked = GlassEngine::GetDwordFromRegistry(L"DisableCoverageSetHook", coverageSetHookDefault) == 0;
-	}
-
-	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::CheckAndRecordOverlayCandidate", g_COcclusionContext_CheckAndRecordOverlayCandidate_Org);
-	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::CollectRectangleForOcclusion", g_COcclusionContext_CollectRectangleForOcclusion_Org.generic);
+	dwmcore::g_projectionArray.ApplyToVariable("COverlayContext::EndOverlayCandidateCollection", g_COverlayContext_EndOverlayCandidateCollection_Org);
+	dwmcore::g_projectionArray.ApplyToVariable("COverlayContext::IsCandidateOverlayCompatible", g_COverlayContext_IsCandidateOverlayCompatible_Org);
 
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::Compute", g_COcclusionContext_Compute_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::SetDeviceTransform", g_COcclusionContext_SetDeviceTransform_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::~COcclusionContext", g_COcclusionContext_Destructor_Org);
 
+	dwmcore::g_projectionArray.ApplyToVariable("CArrayBasedCoverageSet::IsCovered", g_CArrayBasedCoverageSet_IsCovered_Org);
+	if (!g_CArrayBasedCoverageSet_IsCovered_Org)
+	{
+		Shared::g_coverageSetIsCoveredHooked = false;
+		return;
+	}
+	// 上游 3.x 已删除翻转/还原补丁；失效点是 24H2 的某个累积更新而不是 build 本身，
+	// 所以按 build+revision 定点关闭：早期 24H2（LTSC2024 基线）仍保留遮挡裁剪。
+	{
+		const auto version = dwmcore::g_versionInfo;
+		const auto flipHookUnsafe =
+			version.build > os::build_flip_occluders_removed ||
+			(version.build == os::build_flip_occluders_removed && version.revision >= os::revision_flip_occluders_removed);
+		const auto coverageSetHookDefault = flipHookUnsafe ? 1ul : 0ul;
+		Shared::g_coverageSetIsCoveredHooked = GlassEngine::GetDwordFromRegistry(L"DisableCoverageSetHook", coverageSetHookDefault) == 0;
+	}
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::IsOccluded", g_COcclusionContext_IsOccluded_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::PageInPixelsRectToDeviceRect", g_COcclusionContext_PageInPixelsRectToDeviceRect_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("CHwndRenderTarget::RenderDirtyRegion", g_CHwndRenderTarget_RenderDirtyRegion_Org);
@@ -1549,31 +1431,12 @@ void GlassIntegrity::Startup()
 		}
 	}
 
-	if (build_before_w11_21h2)
-	{
-		g_collectRectangleForOcclusionAbi = CollectRectangleForOcclusionAbi::Pre_22000;
-	}
-	else if (build_before_w11_24h2)
-	{
-		g_collectRectangleForOcclusionAbi = CollectRectangleForOcclusionAbi::W11_22000;
-	}
-	else if (
-		dwmcore::g_versionInfo.build == os::build_w11_24h2 &&
-		dwmcore::g_versionInfo.revision < os::revision_24h2_occlusion_abi_break
-	)
-	{
-		g_collectRectangleForOcclusionAbi = CollectRectangleForOcclusionAbi::W11_24H2_Pre7840;
-	}
-	else
-	{
-		g_collectRectangleForOcclusionAbi = CollectRectangleForOcclusionAbi::W11_24H2_7840;
-	}
-
 	HookHelper::PatchFunctions(
 		std::initializer_list<HookHelper::DetourInfo>
 		{
-			{ &g_COcclusionContext_CheckAndRecordOverlayCandidate_Org, &MyCOcclusionContext_CheckAndRecordOverlayCandidate, g_COcclusionContext_CheckAndRecordOverlayCandidate_Org != nullptr },
-			{ &g_COcclusionContext_CollectRectangleForOcclusion_Org.generic, &MyCOcclusionContext_CollectRectangleForOcclusion, g_COcclusionContext_CollectRectangleForOcclusion_Org.generic != nullptr },
+			{ &g_COverlayContext_EndOverlayCandidateCollection_Pre_W10_2004_Org, &MyCOverlayContext_EndOverlayCandidateCollection_Pre_W10_2004, build_before_w10_2004 },
+			{ &g_COverlayContext_EndOverlayCandidateCollection_Org, &MyCOverlayContext_EndOverlayCandidateCollection, !build_before_w10_2004 && build_before_w11_24h2 },
+			{ &g_COverlayContext_IsCandidateOverlayCompatible_Org, &MyCOverlayContext_IsCandidateOverlayCompatible, !build_before_w11_24h2 && g_COverlayContext_IsCandidateOverlayCompatible_Org != nullptr },
 
 			{ &g_COcclusionContext_Compute_Pre_W10_2004_Org, &MyCOcclusionContext_Compute_Pre_W10_2004, build_before_w10_2004 },
 			{ &g_COcclusionContext_Compute_Org, &MyCOcclusionContext_Compute, !build_before_w10_2004 },
@@ -1620,8 +1483,9 @@ void GlassIntegrity::Shutdown()
 	HookHelper::PatchFunctions(
 		std::initializer_list<HookHelper::DetourInfo>
 		{
-			{ &g_COcclusionContext_CheckAndRecordOverlayCandidate_Org, &MyCOcclusionContext_CheckAndRecordOverlayCandidate, g_COcclusionContext_CheckAndRecordOverlayCandidate_Org != nullptr },
-			{ &g_COcclusionContext_CollectRectangleForOcclusion_Org.generic, &MyCOcclusionContext_CollectRectangleForOcclusion, g_COcclusionContext_CollectRectangleForOcclusion_Org.generic != nullptr },
+			{ &g_COverlayContext_EndOverlayCandidateCollection_Pre_W10_2004_Org, & MyCOverlayContext_EndOverlayCandidateCollection_Pre_W10_2004, build_before_w10_2004 },
+			{ &g_COverlayContext_EndOverlayCandidateCollection_Org, &MyCOverlayContext_EndOverlayCandidateCollection, !build_before_w10_2004 && build_before_w11_24h2 },
+			{ &g_COverlayContext_IsCandidateOverlayCompatible_Org, &MyCOverlayContext_IsCandidateOverlayCompatible, !build_before_w11_24h2 && g_COverlayContext_IsCandidateOverlayCompatible_Org != nullptr },
 
 			{ &g_COcclusionContext_Compute_Pre_W10_2004_Org, &MyCOcclusionContext_Compute_Pre_W10_2004, build_before_w10_2004 },
 			{ &g_COcclusionContext_Compute_Org, &MyCOcclusionContext_Compute, !build_before_w10_2004 },
@@ -1657,7 +1521,6 @@ void GlassIntegrity::Shutdown()
 	}
 
 	CArrayBasedGlassCoverageSet::RemoveAll();
-	g_lastCollectedOcclusionRectangle = {};
 	g_shrunkCoverageSetMap.clear();
 	g_safetyZonePool.Cleanup(std::chrono::seconds{ 0 });
 	g_coverageSetCheckpointMap.clear();

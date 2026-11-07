@@ -44,35 +44,6 @@ namespace OpenGlass::CustomThemeAtlasLoader
 	std::unique_ptr<BYTE[]> g_themeAtlasStream{};
 	UINT g_themeAtlasStreamSize{};
 	wil::unique_htheme g_themeHandle{};
-
-	// KB5127648 之后同一个类可能同时存在多个主题句柄，和自己的句柄比已不可靠
-	using PGetThemeClass = HRESULT(WINAPI*)(HTHEME, LPWSTR, int);
-	PGetThemeClass GetThemeClassProc()
-	{
-		static const auto proc = reinterpret_cast<PGetThemeClass>(
-			GetProcAddress(GetModuleHandleW(L"uxtheme.dll"), "GetThemeClass"));
-		return proc;
-	}
-
-	inline bool IsDwmWindowTheme(HTHEME hTheme)
-	{
-		if (!hTheme)
-		{
-			return false;
-		}
-		const auto getThemeClass = GetThemeClassProc();
-		if (!getThemeClass)
-		{
-			return hTheme == g_themeHandle.get();
-		}
-		WCHAR className[64]{};
-		if (FAILED(getThemeClass(hTheme, className, ARRAYSIZE(className))))
-		{
-			return false;
-		}
-		return _wcsicmp(className, L"DWMWindow") == 0;
-	}
-
 	void UnloadTheme()
 	{
 		Shared::g_textGlowBitmap.reset();
@@ -100,7 +71,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeStream(
 )
 {
 	if (
-		!IsDwmWindowTheme(hTheme) ||
+		hTheme != g_themeHandle.get() ||
 		iPartId ||
 		iStateId ||
 		iPropId != TMT_DISKSTREAM ||
@@ -127,7 +98,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeMargins(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		!IsDwmWindowTheme(hTheme) ||
+		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -156,7 +127,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeRect(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		!IsDwmWindowTheme(hTheme) ||
+		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -191,7 +162,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeInt(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		!IsDwmWindowTheme(hTheme) ||
+		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -220,7 +191,7 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeColor(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		!IsDwmWindowTheme(hTheme) ||
+		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(

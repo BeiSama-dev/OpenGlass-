@@ -34,19 +34,6 @@ namespace OpenGlass
 		LPCWSTR url;
 	};
 
-	struct CPdbIdentity
-	{
-		std::wstring pdbFileName{};
-		GUID guid{};
-		DWORD age{};
-	};
-
-	// 从已加载模块的 CodeView 记录取 PDB 身份（文件名 + GUID + age）
-	HRESULT GetModulePdbIdentity(
-		HMODULE moduleHandle,
-		CPdbIdentity& identity
-	);
-
 	winrt::Windows::Foundation::IAsyncOperation<int> DownloadSymbolForModuleAsync(
 		CSymbolDownloader& downloader,
 		HMODULE moduleHandle,

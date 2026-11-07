@@ -90,10 +90,7 @@ bool CArrayBasedGlassCoverageSet::IsVisible(
 			std::abs(wil::rect_height(zorderedRect.m_transformedRect) * wil::rect_width(zorderedRect.m_transformedRect)) > 1.f &&
 
 			RectF::IntersectUnsafe(intersectedRect, coverage) &&
-			(
-				!Shared::g_coverageSetIsCoveredHooked ||
-				!occlusionCoverageSet->IsCovered(intersectedRect, zorderedRect.m_depth)
-			)
+			(!Shared::g_coverageSetIsCoveredHooked || !occlusionCoverageSet->IsCovered(intersectedRect, zorderedRect.m_depth))
 		)
 		{
 			return true;

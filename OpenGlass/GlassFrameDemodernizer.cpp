@@ -25,9 +25,9 @@ namespace OpenGlass::GlassFrameDemodernizer
 	{
 		// call ???
 		0xE8, 0x00, 0x00, 0x00, 0x00,
+		// test al, al
+		0x84, 0xC0
 	};
-	// Replace only the call. The caller can schedule other instructions before
-	// testing AL, as UpdateWindowVisuals does on 26100.9818.
 	UCHAR g_callCDesktopManager_IsHighContrastMode_replacedInstruction[]
 	{
 		// move al, 0x01
@@ -36,6 +36,8 @@ namespace OpenGlass::GlassFrameDemodernizer
 		// nop
 		// nop
 		0x90, 0x90, 0x90,
+		// test al, al
+		0x84, 0xC0
 	};
 	UCHAR g_callCTopLevelWindow_IsShadowNCAreaPart_inlined_Instructions[]
 	{

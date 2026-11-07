@@ -777,8 +777,7 @@ namespace OpenGlass::uDWM
 			return std::array{
 				Util::OffsetInfo{ .offset = 888, .build = os::build_w11_22h2, .revision = 0 },
 				Util::OffsetInfo{ .offset = 864, .build = os::build_w11_24h2, .revision = 0 },
-				Util::OffsetInfo{ .offset = 832, .build = os::build_w11_24h2, .revision = os::revision_24h2_kb5124010 },
-				Util::OffsetInfo{ .offset = 852, .build = 0, .revision = 0 }
+				Util::OffsetInfo{ .offset = 832, .build = 0, .revision = 0 }
 			};
 		}
 	};

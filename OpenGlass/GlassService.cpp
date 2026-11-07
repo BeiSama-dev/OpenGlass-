@@ -269,10 +269,6 @@ HRESULT GlassService::RunInjectionThread()
 		g_injectionThreadStatus = ThreadStatus::Stopped;
 	});
 
-	// The named pipe is only the control channel. Waiting for it forever left the service
-	// reporting RUNNING while the injection thread never scanned DWM at all, which matches
-	// "after an unclean shutdown OpenGlass does nothing until a manual sc stop/start".
-	// Bound the wait and continue regardless: injection does not need the pipe.
 	for (DWORD waited = 0; waited < 30'000; waited += 50)
 	{
 		if (WaitNamedPipeW(c_pipeName, NMPWAIT_NOWAIT))
@@ -303,12 +299,6 @@ HRESULT GlassService::RunInjectionThread()
 	};
 
 	HRESULT hr{ S_OK };
-
-	// Global injection cooldown. A crashed DWM returns with a new pid, so backing off per pid
-	// lets us hit the fresh process 2 seconds later and keep a crash loop alive. Consecutive
-	// failures instead delay every injection (5s, 10s, 20s, 40s, 60s cap).
-	size_t g_consecutiveInjectionFailures{ 0 };
-	auto g_lastInjectionFailure = std::chrono::steady_clock::now() - std::chrono::hours{ 1 };
 	do
 	{
 		// cleanup unused session records
@@ -330,7 +320,7 @@ HRESULT GlassService::RunInjectionThread()
 			goto wait_until_next_cycle;
 		}
 
-		WalkDwmProcesses([&hr, &g_consecutiveInjectionFailures, &g_lastInjectionFailure](DWORD processId) -> bool
+		WalkDwmProcesses([&hr](DWORD processId) -> bool
 		{
 			if (g_injectionThreadStatus == ThreadStatus::Paused)
 			{
@@ -377,27 +367,15 @@ HRESULT GlassService::RunInjectionThread()
 			if (!IsOpenGlassAlreadyLoaded(processId))
 			{
 				const auto currentTimeStamp = std::chrono::steady_clock::now();
-
-				// Global cooldown, not per pid: a crashed DWM comes back with a new pid, so a
-				// per-pid backoff would let us hammer it again 2 seconds later and keep the
-				// crash loop alive.
-				const auto cooldownShift = std::min<size_t>(g_consecutiveInjectionFailures, 3u);
-				const auto cooldown = std::chrono::seconds{ std::min<size_t>(60u, size_t{ 5 } << cooldownShift) };
-				if (g_consecutiveInjectionFailures != 0 && currentTimeStamp - g_lastInjectionFailure < cooldown)
+				const auto it = g_dwmInjectionMap.find(sessionId);
+				if (it != g_dwmInjectionMap.end())
 				{
-					return true;
-				}
+					const auto& [injectionTimeStamp, processHandle] = it->second;
 
-				// The tracked process tells us how the previous attempt ended. It is recorded
-				// before injection, so a FailFast during initialization is visible here too.
-				if (const auto it = g_dwmInjectionMap.find(sessionId); it != g_dwmInjectionMap.end())
-				{
 					DWORD exitCode{ 0 };
-					LOG_IF_WIN32_BOOL_FALSE(GetExitCodeProcess(it->second.processHandle.get(), &exitCode));
-
-					// 0xC0000409 means the injected DLL fast-failed the compositor: that is an
-					// injection failure and has to be surfaced. A DWM killed by the user or by
-					// the session manager is expected and only retries silently.
+					LOG_IF_WIN32_BOOL_FALSE(GetExitCodeProcess(processHandle.get(), &exitCode));
+					// 0xC0000409 表示注入的 DLL 把合成器 fast-fail 了：这才是注入失败，需要提示。
+					// dwm 被用户/会话管理器结束属于正常情况，只静默重试，不弹窗。
 					if (exitCode == 0xC0000409)
 					{
 						auto title = Util::GetResourceStringView<IDS_STRING101>();
@@ -415,9 +393,10 @@ HRESULT GlassService::RunInjectionThread()
 							&response,
 							TRUE
 						);
-						if (response == IDABORT)
+						g_injectionThreadStatus = response == IDABORT ? ThreadStatus::Stopped : ThreadStatus::Running;
+
+						if (g_injectionThreadStatus == ThreadStatus::Stopped)
 						{
-							g_injectionThreadStatus = ThreadStatus::Stopped;
 							hr = E_ABORT;
 							return false;
 						}
@@ -428,23 +407,11 @@ HRESULT GlassService::RunInjectionThread()
 							return false;
 						}
 					}
-
-					g_dwmInjectionMap.erase(it);
 				}
 
-				g_dwmInjectionMap.insert_or_assign(
-					sessionId,
-					CDwmProcessInfo{ currentTimeStamp, OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, processId) }
-				);
-
-				if (SUCCEEDED(InjectOpenGlassDLL(processId, true)))
+				if (const auto hresult = InjectOpenGlassDLL(processId, true); SUCCEEDED(hresult))
 				{
-					g_consecutiveInjectionFailures = 0;
-				}
-				else
-				{
-					++g_consecutiveInjectionFailures;
-					g_lastInjectionFailure = currentTimeStamp;
+					g_dwmInjectionMap.insert_or_assign(sessionId, CDwmProcessInfo{ currentTimeStamp, OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, processId) });
 				}
 			}
 

@@ -337,7 +337,9 @@ namespace OpenGlass::CaptionTextHandler
 			coverageTable[popcount] = static_cast<BYTE>(std::clamp(g + 4.f * g * (1.f - g) * (C1 * g + C2), 0.f, 1.f) * 255.f + 0.5f);
 		}
 
-		// dwmcore 侧 realizer 可用时传每通道覆盖率，由它按 Win7 方式对活体玻璃混合
+		// when the dwmcore-side realizer is operational, hand it the per-channel
+		// coverage instead of baking the text into the single-alpha DIB; the
+		// compositor then blends each channel against the live glass like Win7
 		const bool payloadMode
 		{
 			g_CDrawImageInstruction_Create_Org != nullptr &&
@@ -602,7 +604,9 @@ namespace OpenGlass::CaptionTextHandler
 		// GDI coverage byte -> dwmcore coverage byte
 		BYTE remap[256]{};
 	};
-	// GDI gamma 随文字颜色变化，所以按颜色各缓存一份 remap
+	// GDI's gamma depends on the text colour, so the remap does too. Cache one per colour
+	// rather than one overall: a window alternating between its active and inactive caption
+	// colours would otherwise recalibrate on every focus change.
 	LOGFONTW g_coverageFont{};
 	std::unordered_map<COLORREF, CCoverageMap> g_coverageMaps{};
 	const CCoverageMap* g_coverageMap{ nullptr };
@@ -1622,7 +1626,6 @@ HRESULT CaptionTextHandler::MyICompositionSurfaceBrush2_put_Offset(
 }
 
 HRESULT CaptionTextHandler::MyCDWriteText_ValidateVisual(uDWM::CDWriteText* This)
-try
 {
 	// 0x2 redraw text
 	// 0x8 offset changed
@@ -1691,17 +1694,8 @@ try
 
 	return hr;
 }
-catch (...)
-{
-	// A malformed caption (for example one containing a line break) must not take the
-	// compositor down: swallow the failure and let DWM draw the text on its own.
-	g_dwriteTextVisual = nullptr;
-	g_window = nullptr;
-	return S_OK;
-}
 
 HRESULT CaptionTextHandler::MyCDWriteText_UpdateOffset(uDWM::CDWriteText* This)
-try
 {
 	if (!g_textGlowSize)
 	{
@@ -1724,13 +1718,8 @@ try
 
 	return hr;
 }
-catch (...)
-{
-	return S_OK;
-}
 
 HRESULT CaptionTextHandler::MyCDWriteText_SetSize(uDWM::CDWriteText* This, const SIZE* size)
-try
 {
 	if (!g_textGlowSize)
 	{
@@ -1757,10 +1746,6 @@ try
 	}
 
 	return hr;
-}
-catch (...)
-{
-	return S_OK;
 }
 
 HRESULT CaptionTextHandler::MyCDWriteText_InitializeVisualTreeClone(uDWM::CDWriteText* This, uDWM::CDWriteText* clonedVisual, UINT cloneOption)
