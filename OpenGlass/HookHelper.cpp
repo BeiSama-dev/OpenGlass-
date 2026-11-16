@@ -8,9 +8,29 @@ using namespace OpenGlass;
 HMODULE HookHelper::GetRemoteModuleBase(DWORD processId, LPCWSTR moduleName)
 {
 	HMODULE result{ nullptr };
-	wil::unique_handle snapshot{ CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, processId) };
+	// 开机（尤其冷启动）时目标进程的模块列表还在变动，Toolhelp 快照可能返回
+	// ERROR_BAD_LENGTH；这里短暂重试，仍拿不到就返回空，由调用方回滚这次注入
+	// 并在下一轮轮询里重试。
+	wil::unique_handle snapshot{};
+	for (DWORD attempt = 0; attempt < 50; ++attempt)
+	{
+		snapshot.reset(CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, processId));
+		if (snapshot.is_valid())
+		{
+			break;
+		}
+
+		const auto error = GetLastError();
+		if (error != ERROR_BAD_LENGTH)
+		{
+			LOG_WIN32(error);
+			return result;
+		}
+		Sleep(5);
+	}
 	if (!snapshot.is_valid())
 	{
+		LOG_WIN32(GetLastError());
 		return result;
 	}
 

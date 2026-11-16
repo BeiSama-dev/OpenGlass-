@@ -134,9 +134,8 @@ HRESULT GlassService::InjectOpenGlassDLL(DWORD processId, bool inject)
 		reinterpret_cast<ULONG_PTR>(wil::GetModuleInstanceHandle())
 	);
 
-	const auto CreateRemoteThreadWithNTAPI = [&](LPTHREAD_START_ROUTINE startRoutine, void* parameter) -> wil::unique_handle
+	const auto CreateRemoteThreadWithNTAPI = [&](wil::unique_handle& threadHandle, LPTHREAD_START_ROUTINE startRoutine, void* parameter) -> HRESULT
 	{
-		wil::unique_handle threadHandle{};
 		const auto status = NtCreateThreadEx(
 			threadHandle.put(),
 			THREAD_ALL_ACCESS,
@@ -150,20 +149,83 @@ HRESULT GlassService::InjectOpenGlassDLL(DWORD processId, bool inject)
 			0,
 			nullptr
 		);
-		LOG_IF_NTSTATUS_FAILED(status);
+		RETURN_IF_NTSTATUS_FAILED(status);
 
-		return threadHandle;
+		return S_OK;
+	};
+	const auto WaitForRemoteThread = [](HANDLE threadHandle, DWORD* exitCode = nullptr) -> HRESULT
+	{
+		const auto waitResult = WaitForSingleObject(threadHandle, INFINITE);
+		RETURN_LAST_ERROR_IF(waitResult == WAIT_FAILED);
+		RETURN_HR_IF(E_UNEXPECTED, waitResult != WAIT_OBJECT_0);
+
+		if (exitCode)
+		{
+			RETURN_IF_WIN32_BOOL_FALSE(GetExitCodeThread(threadHandle, exitCode));
+		}
+
+		return S_OK;
 	};
 
 	if (inject)
 	{
-		const auto remoteLoadLibraryW = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryW");
+		const auto kernel32 = GetModuleHandleW(L"kernel32.dll");
+		const auto remoteLoadLibraryW = GetProcAddress(kernel32, "LoadLibraryW");
+		RETURN_LAST_ERROR_IF_NULL(remoteLoadLibraryW);
+		const auto remoteFreeLibrary = GetProcAddress(kernel32, "FreeLibrary");
+		RETURN_LAST_ERROR_IF_NULL(remoteFreeLibrary);
+
+		HMODULE remoteDllBase{};
+		bool loadCompleted{};
+		// 加载成功但初始化线程没能起来时，必须把这一份 LoadLibraryW 引用还回去，
+		// 否则 OpenGlass.dll 会一直挂在 dwm 里，宿主以为"已经注入"，从此不再重试。
+		auto rollbackLoad = wil::scope_exit([&]
+		{
+			if (!loadCompleted)
+			{
+				return;
+			}
+
+			if (!remoteDllBase)
+			{
+				remoteDllBase = HookHelper::GetRemoteModuleBase(processId, Util::g_thisModulePath.c_str());
+			}
+			if (!remoteDllBase)
+			{
+				LOG_HR(HRESULT_FROM_WIN32(ERROR_MOD_NOT_FOUND));
+				return;
+			}
+
+			// Startup 还没跑过：直接释放这份引用，不要走 Shutdown。
+			// 回滚线程运行在 kernel32 里，而不是它要卸载的 DLL 里。
+			wil::unique_handle rollbackThread{};
+			const auto createResult = CreateRemoteThreadWithNTAPI(
+				rollbackThread,
+				reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteFreeLibrary),
+				remoteDllBase
+			);
+			if (FAILED(createResult))
+			{
+				LOG_HR(createResult);
+				return;
+			}
+			DWORD rollbackResult{};
+			const auto waitResult = WaitForRemoteThread(rollbackThread.get(), &rollbackResult);
+			if (FAILED(waitResult))
+			{
+				LOG_HR(waitResult);
+			}
+			else if (!rollbackResult)
+			{
+				LOG_HR(E_FAIL);
+			}
+		});
 
 		{
 			const auto pathSize = (Util::g_thisModulePath.size() + 1ull) * sizeof(WCHAR);
 			void* remotePath = VirtualAllocEx(processHandle.get(), nullptr, pathSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 			RETURN_LAST_ERROR_IF_NULL(remotePath);
-			const auto remotePathCleanup = wil::scope_exit([&]
+			auto remotePathCleanup = wil::scope_exit([&]
 			{
 				LOG_IF_WIN32_BOOL_FALSE(VirtualFreeEx(processHandle.get(), remotePath, 0, MEM_RELEASE));
 			});
@@ -180,22 +242,35 @@ HRESULT GlassService::InjectOpenGlassDLL(DWORD processId, bool inject)
 			);
 			RETURN_HR_IF(E_FAIL, bytesWritten != pathSize);
 
-			const auto loadThread = CreateRemoteThreadWithNTAPI(reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteLoadLibraryW), remotePath);
-			RETURN_LAST_ERROR_IF_NULL(loadThread);
-
-			if (WaitForSingleObject(loadThread.get(), 3'000) != WAIT_OBJECT_0)
+			wil::unique_handle loadThread{};
+			RETURN_IF_FAILED(
+				CreateRemoteThreadWithNTAPI(
+					loadThread,
+					reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteLoadLibraryW),
+					remotePath
+				)
+			);
+			// 必须等 LoadLibraryW 真正返回；中途 TerminateThread 会把目标进程
+			// 卡在加载器锁上（开机冷缓存时这条路径尤其容易超时）。
+			const auto loadWaitResult = WaitForRemoteThread(loadThread.get());
+			if (FAILED(loadWaitResult))
 			{
-				LOG_IF_WIN32_BOOL_FALSE(TerminateThread(loadThread.get(), HRESULT_FROM_WIN32(ERROR_POSSIBLE_DEADLOCK)));
-				return HRESULT_FROM_WIN32(ERROR_POSSIBLE_DEADLOCK);
+				// 完成状态未知：宁可泄漏这段参数内存，也不要回收加载器可能还在读的缓冲区。
+				remotePathCleanup.release();
+				RETURN_IF_FAILED(loadWaitResult);
 			}
+			loadCompleted = true;
 		}
 
-		HMODULE remoteDllBase = HookHelper::GetRemoteModuleBase(processId, Util::g_thisModulePath.c_str());
+		remoteDllBase = HookHelper::GetRemoteModuleBase(processId, Util::g_thisModulePath.c_str());
 		RETURN_HR_IF_NULL(HRESULT_FROM_WIN32(ERROR_MOD_NOT_FOUND), remoteDllBase);
 
 		const auto remoteInit = reinterpret_cast<LPTHREAD_START_ROUTINE>(reinterpret_cast<uint8_t*>(remoteDllBase) + initOffset);
-		const auto initThread = CreateRemoteThreadWithNTAPI(remoteInit, nullptr);
-		RETURN_LAST_ERROR_IF_NULL(initThread);
+		wil::unique_handle initThread{};
+		RETURN_IF_FAILED(CreateRemoteThreadWithNTAPI(initThread, remoteInit, nullptr));
+		// 初始化线程已经在跑了，可能正在发布钩子；从这里开始只能走正常的
+		// 卸载/关闭流程，不能再回滚加载。
+		rollbackLoad.release();
 	}
 	else
 	{
@@ -206,8 +281,13 @@ HRESULT GlassService::InjectOpenGlassDLL(DWORD processId, bool inject)
 		}
 
 		const auto remoteUninit = reinterpret_cast<LPTHREAD_START_ROUTINE>(reinterpret_cast<uint8_t*>(remoteDllBase) + uninitOffset);
-		const auto uninitThread = CreateRemoteThreadWithNTAPI(remoteUninit, nullptr);
-		RETURN_LAST_ERROR_IF_NULL(uninitThread);
+		wil::unique_handle uninitThread{};
+		RETURN_IF_FAILED(CreateRemoteThreadWithNTAPI(uninitThread, remoteUninit, nullptr));
+
+		// FreeLibraryAndExitThread 结束线程时 DLL 才真正卸载完。
+		DWORD exitCode{};
+		RETURN_IF_FAILED(WaitForRemoteThread(uninitThread.get(), &exitCode));
+		RETURN_IF_FAILED(static_cast<HRESULT>(exitCode));
 	}
 
 	return S_OK;
@@ -269,10 +349,6 @@ HRESULT GlassService::RunInjectionThread()
 		g_injectionThreadStatus = ThreadStatus::Stopped;
 	});
 
-	// The named pipe is only the control channel. Waiting for it forever left the service
-	// reporting RUNNING while the injection thread never scanned DWM at all, which matches
-	// "after an unclean shutdown OpenGlass does nothing until a manual sc stop/start".
-	// Bound the wait and continue regardless: injection does not need the pipe.
 	for (DWORD waited = 0; waited < 30'000; waited += 50)
 	{
 		if (WaitNamedPipeW(c_pipeName, NMPWAIT_NOWAIT))
@@ -303,12 +379,6 @@ HRESULT GlassService::RunInjectionThread()
 	};
 
 	HRESULT hr{ S_OK };
-
-	// Global injection cooldown. A crashed DWM returns with a new pid, so backing off per pid
-	// lets us hit the fresh process 2 seconds later and keep a crash loop alive. Consecutive
-	// failures instead delay every injection (5s, 10s, 20s, 40s, 60s cap).
-	size_t g_consecutiveInjectionFailures{ 0 };
-	auto g_lastInjectionFailure = std::chrono::steady_clock::now() - std::chrono::hours{ 1 };
 	do
 	{
 		// cleanup unused session records
@@ -330,7 +400,7 @@ HRESULT GlassService::RunInjectionThread()
 			goto wait_until_next_cycle;
 		}
 
-		WalkDwmProcesses([&hr, &g_consecutiveInjectionFailures, &g_lastInjectionFailure](DWORD processId) -> bool
+		WalkDwmProcesses([&hr](DWORD processId) -> bool
 		{
 			if (g_injectionThreadStatus == ThreadStatus::Paused)
 			{
@@ -377,27 +447,15 @@ HRESULT GlassService::RunInjectionThread()
 			if (!IsOpenGlassAlreadyLoaded(processId))
 			{
 				const auto currentTimeStamp = std::chrono::steady_clock::now();
-
-				// Global cooldown, not per pid: a crashed DWM comes back with a new pid, so a
-				// per-pid backoff would let us hammer it again 2 seconds later and keep the
-				// crash loop alive.
-				const auto cooldownShift = std::min<size_t>(g_consecutiveInjectionFailures, 3u);
-				const auto cooldown = std::chrono::seconds{ std::min<size_t>(60u, size_t{ 5 } << cooldownShift) };
-				if (g_consecutiveInjectionFailures != 0 && currentTimeStamp - g_lastInjectionFailure < cooldown)
+				const auto it = g_dwmInjectionMap.find(sessionId);
+				if (it != g_dwmInjectionMap.end())
 				{
-					return true;
-				}
+					const auto& [injectionTimeStamp, processHandle] = it->second;
 
-				// The tracked process tells us how the previous attempt ended. It is recorded
-				// before injection, so a FailFast during initialization is visible here too.
-				if (const auto it = g_dwmInjectionMap.find(sessionId); it != g_dwmInjectionMap.end())
-				{
 					DWORD exitCode{ 0 };
-					LOG_IF_WIN32_BOOL_FALSE(GetExitCodeProcess(it->second.processHandle.get(), &exitCode));
-
-					// 0xC0000409 means the injected DLL fast-failed the compositor: that is an
-					// injection failure and has to be surfaced. A DWM killed by the user or by
-					// the session manager is expected and only retries silently.
+					LOG_IF_WIN32_BOOL_FALSE(GetExitCodeProcess(processHandle.get(), &exitCode));
+					// 0xC0000409 表示注入的 DLL 把合成器 fast-fail 了：这才是注入失败，需要提示。
+					// dwm 被用户/会话管理器结束属于正常情况，只静默重试，不弹窗。
 					if (exitCode == 0xC0000409)
 					{
 						auto title = Util::GetResourceStringView<IDS_STRING101>();
@@ -415,9 +473,10 @@ HRESULT GlassService::RunInjectionThread()
 							&response,
 							TRUE
 						);
-						if (response == IDABORT)
+						g_injectionThreadStatus = response == IDABORT ? ThreadStatus::Stopped : ThreadStatus::Running;
+
+						if (g_injectionThreadStatus == ThreadStatus::Stopped)
 						{
-							g_injectionThreadStatus = ThreadStatus::Stopped;
 							hr = E_ABORT;
 							return false;
 						}
@@ -428,23 +487,11 @@ HRESULT GlassService::RunInjectionThread()
 							return false;
 						}
 					}
-
-					g_dwmInjectionMap.erase(it);
 				}
 
-				g_dwmInjectionMap.insert_or_assign(
-					sessionId,
-					CDwmProcessInfo{ currentTimeStamp, OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, processId) }
-				);
-
-				if (SUCCEEDED(InjectOpenGlassDLL(processId, true)))
+				if (const auto hresult = InjectOpenGlassDLL(processId, true); SUCCEEDED(hresult))
 				{
-					g_consecutiveInjectionFailures = 0;
-				}
-				else
-				{
-					++g_consecutiveInjectionFailures;
-					g_lastInjectionFailure = currentTimeStamp;
+					g_dwmInjectionMap.insert_or_assign(sessionId, CDwmProcessInfo{ currentTimeStamp, OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, processId) });
 				}
 			}
 
@@ -472,7 +519,9 @@ HRESULT GlassService::RunInjectionThread()
 HRESULT GlassService::RunServerThread()
 {
 	RETURN_IF_FAILED(SetThreadDescription(GetCurrentThread(), L"OpenGlass Server Thread"));
-	RETURN_IF_WIN32_BOOL_FALSE(SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS));
+	// 只把管道线程降到空闲优先级。以前是 SetPriorityClass(整个进程, IDLE)，
+	// 开机高负载时连注入线程一起被饿死，看起来就像"没有被注入"。
+	RETURN_IF_WIN32_BOOL_FALSE(SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE));
 
 	RETURN_IF_FAILED(RoInitialize(RO_INIT_MULTITHREADED));
 	const wil::unique_rouninitialize_call wrtScope{};
