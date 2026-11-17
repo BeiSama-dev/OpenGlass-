@@ -6,8 +6,8 @@ namespace OpenGlass::Shared
 {
 	inline bool g_xxSaver{ false };
 	inline bool g_transparencyEnabled{ true };
-	// CArrayBasedCoverageSet::IsCovered 是否有可用的原生实现（Optional 投影；没有时不许调它的 inline 成员）
 	inline bool g_coverageSetIsCoveredHooked{};
+	inline bool g_coverageSetBypassed{};
 
 	inline enum class GlassType : UINT
 	{

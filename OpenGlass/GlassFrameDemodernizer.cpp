@@ -25,8 +25,6 @@ namespace OpenGlass::GlassFrameDemodernizer
 	{
 		// call ???
 		0xE8, 0x00, 0x00, 0x00, 0x00,
-		// test al, al
-		0x84, 0xC0
 	};
 	UCHAR g_callCDesktopManager_IsHighContrastMode_replacedInstruction[]
 	{
@@ -36,8 +34,6 @@ namespace OpenGlass::GlassFrameDemodernizer
 		// nop
 		// nop
 		0x90, 0x90, 0x90,
-		// test al, al
-		0x84, 0xC0
 	};
 	UCHAR g_callCTopLevelWindow_IsShadowNCAreaPart_inlined_Instructions[]
 	{

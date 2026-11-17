@@ -1626,6 +1626,7 @@ HRESULT CaptionTextHandler::MyICompositionSurfaceBrush2_put_Offset(
 }
 
 HRESULT CaptionTextHandler::MyCDWriteText_ValidateVisual(uDWM::CDWriteText* This)
+try
 {
 	// 0x2 redraw text
 	// 0x8 offset changed
@@ -1694,6 +1695,12 @@ HRESULT CaptionTextHandler::MyCDWriteText_ValidateVisual(uDWM::CDWriteText* This
 
 	return hr;
 }
+catch (...)
+{
+	g_dwriteTextVisual = nullptr;
+	g_window = nullptr;
+	return S_OK;
+}
 
 HRESULT CaptionTextHandler::MyCDWriteText_UpdateOffset(uDWM::CDWriteText* This)
 {
@@ -1709,14 +1716,22 @@ HRESULT CaptionTextHandler::MyCDWriteText_UpdateOffset(uDWM::CDWriteText* This)
 	// This gives us enough space to render the glow.
 	auto& offset = const_cast<POINT&>(This->GetOffset());
 	const auto actualOffsetX = offset.x;
-	if (!This->IsRTLMirrored())
+	try
 	{
-		offset.x = std::max(offset.x - g_textGlowSize, 0l);
-	}
-	const auto hr = g_CDWriteText_UpdateOffset_Org(This);
-	offset.x = actualOffsetX;
+		if (!This->IsRTLMirrored())
+		{
+			offset.x = std::max(offset.x - g_textGlowSize, 0l);
+		}
+		const auto hr = g_CDWriteText_UpdateOffset_Org(This);
+		offset.x = actualOffsetX;
 
-	return hr;
+		return hr;
+	}
+	catch (...)
+	{
+		offset.x = actualOffsetX;
+		return S_OK;
+	}
 }
 
 HRESULT CaptionTextHandler::MyCDWriteText_SetSize(uDWM::CDWriteText* This, const SIZE* size)
@@ -1726,26 +1741,33 @@ HRESULT CaptionTextHandler::MyCDWriteText_SetSize(uDWM::CDWriteText* This, const
 		return g_CDWriteText_SetSize_Org(This, size);
 	}
 
-	const auto hr = g_CDWriteText_SetSize_Org(This, size);
-	// SpriteVisual will crop what exceeds its bounding rectangle,
-	// expand it to ensure enough space to render the glow.
-	auto& offset = const_cast<POINT&>(This->GetOffset());
-	if (This->IsRTLMirrored())
+	try
 	{
-		This->GetVisualProxy()->SetSize(
-			static_cast<double>(size->cx + offset.x - std::max(offset.x - g_textGlowSize, 0l)),
-			static_cast<double>(size->cy)
-		);
-	}
-	else
-	{
-		This->GetVisualProxy()->SetSize(
-			static_cast<double>(size->cx + offset.x - std::max(offset.x - g_textGlowSize, 0l) + g_textGlowSize),
-			static_cast<double>(size->cy)
-		);
-	}
+		const auto hr = g_CDWriteText_SetSize_Org(This, size);
+		// SpriteVisual will crop what exceeds its bounding rectangle,
+		// expand it to ensure enough space to render the glow.
+		auto& offset = const_cast<POINT&>(This->GetOffset());
+		if (This->IsRTLMirrored())
+		{
+			This->GetVisualProxy()->SetSize(
+				static_cast<double>(size->cx + offset.x - std::max(offset.x - g_textGlowSize, 0l)),
+				static_cast<double>(size->cy)
+			);
+		}
+		else
+		{
+			This->GetVisualProxy()->SetSize(
+				static_cast<double>(size->cx + offset.x - std::max(offset.x - g_textGlowSize, 0l) + g_textGlowSize),
+				static_cast<double>(size->cy)
+			);
+		}
 
-	return hr;
+		return hr;
+	}
+	catch (...)
+	{
+		return S_OK;
+	}
 }
 
 HRESULT CaptionTextHandler::MyCDWriteText_InitializeVisualTreeClone(uDWM::CDWriteText* This, uDWM::CDWriteText* clonedVisual, UINT cloneOption)

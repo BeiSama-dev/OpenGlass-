@@ -327,8 +327,7 @@ void GlassIntegrity::ShrinkOccludersAboveGlass(dwmcore::COcclusionContext* occlu
 
 	const auto coverageSet = occlusionContext->GetArrayBasedCoverageSet();
 	const auto matrix = occlusionContext->GetDeviceTransform();
-	// 从 Compute 进来，和 IsCovered 有没有挂钩无关：没挂上时调它会跳进无效函数指针
-	if (!Shared::g_coverageSetIsCoveredHooked)
+	if (Shared::g_coverageSetBypassed)
 	{
 		return;
 	}
@@ -1383,21 +1382,8 @@ void GlassIntegrity::Startup()
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::~COcclusionContext", g_COcclusionContext_Destructor_Org);
 
 	dwmcore::g_projectionArray.ApplyToVariable("CArrayBasedCoverageSet::IsCovered", g_CArrayBasedCoverageSet_IsCovered_Org);
-	if (!g_CArrayBasedCoverageSet_IsCovered_Org)
-	{
-		Shared::g_coverageSetIsCoveredHooked = false;
-		return;
-	}
-	// 上游 3.x 已删除翻转/还原补丁；失效点是 24H2 的某个累积更新而不是 build 本身，
-	// 所以按 build+revision 定点关闭：早期 24H2（LTSC2024 基线）仍保留遮挡裁剪。
-	{
-		const auto version = dwmcore::g_versionInfo;
-		const auto flipHookUnsafe =
-			version.build > os::build_flip_occluders_removed ||
-			(version.build == os::build_flip_occluders_removed && version.revision >= os::revision_flip_occluders_removed);
-		const auto coverageSetHookDefault = flipHookUnsafe ? 1ul : 0ul;
-		Shared::g_coverageSetIsCoveredHooked = GlassEngine::GetDwordFromRegistry(L"DisableCoverageSetHook", coverageSetHookDefault) == 0;
-	}
+	Shared::g_coverageSetBypassed = GlassEngine::GetDwordFromRegistry(L"DisableCoverageSetHook", 0) != 0;
+	Shared::g_coverageSetIsCoveredHooked = !Shared::g_coverageSetBypassed && g_CArrayBasedCoverageSet_IsCovered_Org != nullptr;
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::IsOccluded", g_COcclusionContext_IsOccluded_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("COcclusionContext::PageInPixelsRectToDeviceRect", g_COcclusionContext_PageInPixelsRectToDeviceRect_Org);
 	dwmcore::g_projectionArray.ApplyToVariable("CHwndRenderTarget::RenderDirtyRegion", g_CHwndRenderTarget_RenderDirtyRegion_Org);

@@ -587,6 +587,7 @@ void OpenGlass::Startup()
 			os::build_w11_21h2,
 			os::build_w11_22h2,
 			os::build_w11_24h2,
+			os::build_w11_25h2,
 		};
 		std::find(supportList.begin(), supportList.end(), uDWM::g_versionInfo.build) == supportList.end() ||
 		std::find(supportList.begin(), supportList.end(), dwmcore::g_versionInfo.build) == supportList.end()

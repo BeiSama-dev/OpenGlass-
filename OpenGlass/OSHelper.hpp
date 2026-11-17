@@ -40,7 +40,6 @@ namespace OpenGlass::os
 		build_w11_23h2 = 22631,
 		build_w11_24h2 = 26100,
 		build_w11_25h2 = 26200,
-		// 自该版本起 occluder 翻转/还原补丁不可用（上游 3.x 已整段删除）
 		build_flip_occluders_removed = 26100,
 	};
 	enum os_revision : ULONG
@@ -52,10 +51,9 @@ namespace OpenGlass::os
 		revision_24h2_kb5067036 = 7019,
 		revision_25h2_kb5068861 = 7019,
 		revision_kb5083631 = 8328,
-		// 24H2 KB5101684 = 26100.8972：上游为此专门更新 dwmcore 偏移表
-		// （4 处结构体字段各变化 16 字节），遮挡/覆盖相关实现自此不再适配旧补丁
 		revision_kb5101684 = 8972,
 		revision_flip_occluders_removed = 8972,
+		revision_24h2_kb5124010 = 9549,
 	};
 }
 

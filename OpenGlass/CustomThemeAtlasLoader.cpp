@@ -71,11 +71,11 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeStream(
 )
 {
 	if (
-		hTheme != g_themeHandle.get() ||
 		iPartId ||
 		iStateId ||
 		iPropId != TMT_DISKSTREAM ||
-		!g_themeAtlasStreamSize
+		!g_themeAtlasStreamSize ||
+		!IsDwmWindowTheme(hTheme)
 	)
 	{
 		return g_GetThemeStream_Org(hTheme, iPartId, iStateId, iPropId, ppvStream, pcbStream, hInst);
@@ -98,7 +98,6 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeMargins(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -107,7 +106,8 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeMargins(
 					iPropId
 				)
 			)
-		) == g_themeAtlasLayoutMap.end()
+		) == g_themeAtlasLayoutMap.end() ||
+		!IsDwmWindowTheme(hTheme)
 	)
 	{
 		return g_GetThemeMargins_Org(hTheme, hdc, iPartId, iStateId, iPropId, prc, pMargins);
@@ -127,7 +127,6 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeRect(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -136,7 +135,8 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeRect(
 					iPropId
 				)
 			)
-		) == g_themeAtlasLayoutMap.end()
+		) == g_themeAtlasLayoutMap.end() ||
+		!IsDwmWindowTheme(hTheme)
 	)
 	{
 		return g_GetThemeRect_Org(hTheme, iPartId, iStateId, iPropId, pRect);
@@ -162,7 +162,6 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeInt(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -171,7 +170,8 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeInt(
 					iPropId
 				)
 			)
-		) == g_themeAtlasLayoutMap.end()
+		) == g_themeAtlasLayoutMap.end() ||
+		!IsDwmWindowTheme(hTheme)
 	)
 	{
 		return g_GetThemeInt_Org(hTheme, iPartId, iStateId, iPropId, piVal);
@@ -191,7 +191,6 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeColor(
 {
 	decltype(g_themeAtlasLayoutMap)::iterator it;
 	if (
-		hTheme != g_themeHandle.get() ||
 		(
 			it = g_themeAtlasLayoutMap.find(
 				make_theme_atlas_layout_key(
@@ -200,7 +199,8 @@ HRESULT CustomThemeAtlasLoader::MyGetThemeColor(
 					iPropId
 				)
 			)
-		) == g_themeAtlasLayoutMap.end()
+		) == g_themeAtlasLayoutMap.end() ||
+		!IsDwmWindowTheme(hTheme)
 	)
 	{
 		return g_GetThemeColor_Org(hTheme, iPartId, iStateId, iPropId, pColor);
