@@ -170,7 +170,8 @@ HRESULT CaptionMetricsTweaker::MyCTopLevelWindow_UpdateNCAreaPositionsAndSizes(u
 
 	if (auto iconVisual = This->GetIconVisual(); iconVisual && cxLeft > 0)
 	{
-		iconVisual->SetInsetFromParentLeft(cxLeft);
+		if (g_captionButtons != CaptionButtons::Windows8 || !maximized)
+			iconVisual->SetInsetFromParentLeft(g_captionButtons == CaptionButtons::Windows8 ? cxLeft + 2 : cxLeft);
 	}
 
 	if (auto textVisual = This->GetTextVisual(); textVisual)
